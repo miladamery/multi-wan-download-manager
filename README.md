@@ -7,9 +7,11 @@ A Windows download manager application that can download files through multiple 
 - **Multi-Interface Support**: Download files through different network interfaces (Ethernet, Wi-Fi, Mobile Hotspot) simultaneously
 - **IP Binding**: Each download is bound to a specific source IP address
 - **Download Queue**: Add multiple URLs to a queue and start them together
+- **Batch URL Import**: Import multiple URLs from text file with automatic round-robin interface distribution
 - **Progress Tracking**: Real-time progress bars, speed display, and ETA calculation
+- **File Size Display**: Shows file sizes in human-readable format (B, KB, MB, GB, TB) for queued and active downloads
 - **Speed Limiting**: Set per-download speed limits in MB/s
-- **Pause/Resume**: Pause and resume individual downloads
+- **Pause/Resume**: Pause and resume individual downloads with dedicated Actions column
 - **Network Detection**: Automatically detects all connected network interfaces
 
 ## Requirements
@@ -49,20 +51,45 @@ python main.py
 
 ### Basic Workflow
 
+#### Single URL Downloads
+
 1. **Add Download URLs**
+   - Switch to "Single URL" tab
    - Enter a URL in the "Add New Download" section
    - Click "Paste" to paste from clipboard
    - Select the network interface to use
    - Optionally set a speed limit
    - Click "Add to Queue"
 
+#### Batch URL Downloads (Round-Robin Distribution)
+
+1. **Import Multiple URLs**
+   - Switch to "Batch URLs (Round-Robin)" tab
+   - Option 1: Paste multiple URLs (one per line) in the text area
+   - Option 2: Click "Import from File" to load URLs from a text file
+   - Set a speed limit (applies to all URLs in batch)
+   - Click "Add All to Queue (Round-Robin)"
+
+2. **Automatic Distribution**
+   - URLs are automatically distributed across all available interfaces
+   - Uses round-robin algorithm for even distribution
+   - Example: With 3 interfaces (Ethernet, Wi-Fi, Mobile) and 6 URLs:
+     - URL 1 → Ethernet
+     - URL 2 → Wi-Fi
+     - URL 3 → Mobile
+     - URL 4 → Ethernet (wraps around)
+     - URL 5 → Wi-Fi
+     - URL 6 → Mobile
+
 2. **Start Downloads**
    - Add all your URLs to the queue
    - Click "Start All" to begin downloading
+   - One download per interface starts simultaneously
+   - Remaining downloads stay queued and auto-start when interfaces free up
 
 3. **Monitor Progress**
    - View real-time progress in the "Active Downloads" section
-   - See current speed and ETA for each download
+   - See file size, progress percentage, speed, and ETA for each download
    - Total speed shown in status bar
 
 4. **Control Downloads**
@@ -82,16 +109,40 @@ The application will automatically detect all connected interfaces and display t
 
 ### Example Use Cases
 
-#### Download File Parts Simultaneously
+#### Download File Parts Simultaneously (Manual Interface Selection)
 
 If you have a large file split into multiple parts (e.g., `chunk1.rar`, `chunk2.rar`, `chunk3.rar`):
 
+**Method 1: Manual Interface Selection (Single URL tab)**
 1. Add `chunk1.rar` → Select Ethernet
 2. Add `chunk2.rar` → Select Wi-Fi
 3. Add `chunk3.rar` → Select Mobile Hotspot
 4. Click "Start All"
 
 Each part will download through a different connection, effectively combining their speeds.
+
+**Method 2: Round-Robin Distribution (Batch URLs tab)**
+1. Create a text file `urls.txt` with:
+   ```
+   https://example.com/file1.rar
+   https://example.com/file2.rar
+   https://example.com/file3.rar
+   ```
+2. Switch to "Batch URLs (Round-Robin)" tab
+3. Click "Import from File" and select `urls.txt`
+4. Set speed limit (optional)
+5. Click "Add All to Queue (Round-Robin)"
+6. Click "Start All"
+
+URLs are automatically distributed across all available interfaces in round-robin fashion.
+
+#### Download Multiple Files Efficiently
+
+When downloading multiple files from different sources:
+- Use batch URL import to add all URLs at once
+- Round-robin distribution ensures even load across interfaces
+- File sizes are displayed before downloading (when available from server)
+- Monitor all downloads in unified Active Downloads table
 
 #### Verify IP Binding
 
@@ -130,7 +181,7 @@ Downloader/
 
 Edit `config.py` to customize:
 
-- `DEFAULT_DOWNLOAD_DIR` - Default save location for downloads
+- `DEFAULT_DOWNLOAD_DIR` - Default save location for downloads (defaults to Windows Downloads folder: `C:\Users\{Username}\Downloads`)
 - `MAX_CONCURRENT_DOWNLOADS` - Maximum simultaneous downloads
 - `DEFAULT_CHUNK_SIZE` - Size of download chunks (8KB default)
 - `REFRESH_INTERVAL` - GUI update frequency (500ms default)
@@ -167,14 +218,16 @@ Edit `config.py` to customize:
 
 Potential features for future versions:
 
+- [x] Automatic interface selection (round-robin) - **IMPLEMENTED**
+- [x] Batch URL import from file - **IMPLEMENTED**
+- [x] File size display - **IMPLEMENTED**
 - [ ] Download scheduling (start at specific time)
 - [ ] Download history and logs
-- [ ] Export/import download lists
 - [ ] Bandwidth usage graphs
 - [ ] Dark mode theme
 - [ ] Multi-language support
 - [ ] Command-line interface alternative
-- [ ] Automatic interface selection (round-robin, load balancing)
+- [ ] Advanced load balancing strategies (weighted by interface speed)
 
 ## License
 

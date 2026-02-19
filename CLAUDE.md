@@ -71,8 +71,14 @@ Tests that downloads are correctly bound to each detected interface by verifying
 
 **GUI** (`download_manager_ui.py`)
 - PyQt6 `DownloadManagerApp` main window
+- Tabbed URL input: "Single URL" and "Batch URLs (Round-Robin)" tabs
 - Two tables: `queue_table` (pending downloads) and `active_table` (running downloads)
+- Queue table columns: URL, Interface, Speed Limit, **Size**, Actions
+- Active downloads table columns: Status, File, Interface, **Size**, Progress, Speed|ETA, Actions
 - Interface selection dropdown auto-populates with internet-connected interfaces
+- Batch URL import from file with automatic round-robin interface distribution
+- File size display via HEAD requests (`DownloadEngine.get_download_info()`)
+- Human-readable file size formatting (`_format_file_size()`)
 - Auto-starts next queued download for an interface when current download completes/fails (`_start_next_download_for_interface`)
 - Progress updates via QTimer every 500ms (configurable)
 
@@ -114,6 +120,7 @@ This ensures all HTTP/HTTPS requests from this session originate from the specif
 
 ## Download Flow
 
+### Single URL Downloads
 1. User adds URL to queue, selects interface and optional speed limit
 2. Click "Start All" - GUI starts max 1 download per interface (rest remain queued)
 3. For each download:
@@ -126,12 +133,86 @@ This ensures all HTTP/HTTPS requests from this session originate from the specif
    - Next queued download for same interface auto-started
    - User notified with file path
 
+### Batch URL Downloads (Round-Robin)
+1. User imports multiple URLs (text area or file import)
+2. `add_batch_urls_to_queue()` distributes URLs across interfaces:
+   - For each URL: `interface_index = url_index % interface_count`
+   - Creates `DownloadEngine` instance to fetch file sizes via HEAD requests
+   - Stores `file_size` in download_info dict
+3. Click "Start All" - Same flow as single URL downloads
+4. Queue table displays: URL, Interface, Speed Limit, Size (human-readable format)
+5. Active downloads table displays: Status, File, Interface, Size, Progress, Speed|ETA, Actions
+
 ## Pause/Resume Mechanics
 
 - Pause: Sets `is_paused=True` in engine, download loop sleeps while paused
 - Resume: Sets `is_paused=False`, loop continues from same position
 - Cancel: Sets `is_running=False`, closes session, removes partial file
 - True resume (after app restart) uses HTTP Range headers to continue from partial file
+
+## Round-Robin URL Distribution
+
+### Algorithm
+The round-robin distribution in `add_batch_urls_to_queue()`:
+
+```python
+available_interfaces = self.network_interfaces  # List of interface dicts
+interface_count = len(available_interfaces)
+
+for index, url in enumerate(valid_urls):
+    interface_index = index % interface_count  # Modulo for cycling
+    assigned_interface = available_interfaces[interface_index]
+    # Create download_info and add to queue
+```
+
+### Example Distribution
+With 3 interfaces (Ethernet, Wi-Fi, Mobile) and 6 URLs:
+- URL 0 (index 0) → 0 % 3 = 0 → Ethernet
+- URL 1 (index 1) → 1 % 3 = 1 → Wi-Fi
+- URL 2 (index 2) → 2 % 3 = 2 → Mobile
+- URL 3 (index 3) → 3 % 3 = 0 → Ethernet (wraps)
+- URL 4 (index 4) → 4 % 3 = 1 → Wi-Fi
+- URL 5 (index 5) → 5 % 3 = 2 → Mobile
+
+### Batch Import Features
+- **File Import**: `import_urls_from_file()` reads URLs from text files
+- **Comment Support**: Lines starting with `#` are treated as comments
+- **Validation**: Each URL is validated before adding to queue
+- **Error Handling**: Gracefully handles invalid URLs and network errors
+- **File Size Fetching**: Uses HEAD requests to get file sizes before adding to queue
+
+## File Size Handling
+
+### Fetching File Sizes
+`DownloadEngine.get_download_info()` uses HTTP HEAD requests:
+```python
+response = session.head(url, timeout=30, allow_redirects=True)
+file_size = int(response.headers.get('content-length', 0))
+```
+
+### Display Formatting
+`_format_file_size()` converts bytes to human-readable format:
+```python
+def _format_file_size(self, size_bytes: int) -> str:
+    if size_bytes == 0:
+        return "Unknown"
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.1f} PB"
+```
+
+Examples:
+- 500 bytes → "500.0 B"
+- 2,048 bytes → "2.0 KB"
+- 2,097,152 bytes → "2.0 MB"
+- 2,147,483,648 bytes → "2.0 GB"
+
+### Storage
+- File sizes are stored in `download_info['file_size']` (in bytes)
+- Persisted to state file for queue restoration
+- Displayed in both Queue table and Active Downloads table
 
 ## Testing IP Binding
 
@@ -180,3 +261,50 @@ pyinstaller downloader.spec --clean
 ```
 
 The `--clean` flag forces a full rebuild (useful if changes aren't reflected).
+
+## Table Structures
+
+### Queue Table (`queue_table`)
+| Column | Index | Description |
+|--------|-------|-------------|
+| URL | 0 | Download URL |
+| Interface | 1 | Network interface name and IP |
+| Speed Limit | 2 | Per-download speed limit (MB/s) or "Unlimited" |
+| Size | 3 | File size in human-readable format (B/KB/MB/GB/TB) |
+| Actions | 4 | Remove button |
+
+### Active Downloads Table (`active_table`)
+| Column | Index | Description |
+|--------|-------|-------------|
+| Status | 0 | Icon: ↓ (downloading), || (paused), ✓ (completed) |
+| File | 1 | Filename extracted from URL |
+| Interface | 2 | Source IP address |
+| Size | 3 | Total file size in human-readable format |
+| Progress | 4 | Progress bar with percentage |
+| Speed \| ETA | 5 | Current speed (MB/s) and estimated time remaining |
+| Actions | 6 | Pause/Resume/Remove buttons |
+
+## Important Implementation Notes
+
+### Lambda Closure Bug Fix
+When connecting signals in loops, always capture loop variables by value using default arguments:
+
+```python
+# WRONG - All buttons will use the last download_id
+button.clicked.connect(lambda: self.pause_download(download_id))
+
+# CORRECT - Each button captures its own download_id
+button.clicked.connect(lambda checked, did=download_id: self.pause_download(did))
+```
+
+This is critical for the Pause/Resume buttons in the Active Downloads table. The `checked` parameter is required because `QPushButton.clicked()` signal sends it.
+
+### State Persistence
+File sizes are persisted to state files:
+```python
+# Saving
+"file_size": dl.get("file_size", 0)
+
+# Restoring (defaults to 0 for backward compatibility)
+"file_size": dl.get("file_size", 0)
+```

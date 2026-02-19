@@ -39,7 +39,7 @@ APP_VERSION = "1.0.0"
 # ============================================================================
 # DOWNLOAD SETTINGS
 # ============================================================================
-DEFAULT_DOWNLOAD_DIR = os.path.join(PORTABLE_BASE_DIR, "Downloads")
+DEFAULT_DOWNLOAD_DIR = os.path.expanduser("~/Downloads")
 MAX_CONCURRENT_DOWNLOADS = 10
 DEFAULT_CHUNK_SIZE = 8192  # 8KB - size of chunks for streaming downloads
 
