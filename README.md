@@ -17,12 +17,22 @@ A Windows download manager application that can download files through multiple 
 ## Requirements
 
 - Windows 10 or later
-- Python 3.9 or higher
+- Python 3.9 or higher (if running from source)
 - Multiple network interfaces (e.g., Ethernet + Mobile Hotspot) for full functionality
 
 ## Installation
 
-### 1. Clone or Download this Project
+### Option 1: Download Pre-Built Executable (Recommended)
+
+1. Go to the [Releases](https://github.com/miladamery/multi-wan-download-manager/releases) page
+2. Download the latest `MultiWANDownloader.exe`
+3. Run the executable - no Python installation needed!
+
+The executable is portable and creates `Downloads` and `.multiwan_downloader` folders next to the exe file.
+
+### Option 2: Run from Source
+
+#### 1. Clone or Download this Project
 
 ```bash
 cd C:\Users\Milad\Desktop\Downloader
@@ -46,6 +56,29 @@ The required packages are:
 ```bash
 python main.py
 ```
+
+### Building the Executable
+
+If you want to build the executable yourself:
+
+#### Local Build
+```bash
+pip install pyinstaller
+pyinstaller downloader.spec
+```
+The executable will be in `dist/MultiWANDownloader.exe`.
+
+#### CI/CD Automatic Builds
+This project uses GitHub Actions to automatically build executables:
+- Builds are triggered on every push to `main` branch
+- Releases are created automatically when you push version tags (e.g., `v1.0.0`)
+
+To create a new release:
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+The executable will be automatically built and attached to the GitHub Release.
 
 ## Usage
 
