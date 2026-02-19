@@ -75,17 +75,22 @@ Tests that downloads are correctly bound to each detected interface by verifying
 - Two tables: `queue_table` (pending downloads) and `active_table` (running downloads)
 - Queue table columns: URL, Interface, Speed Limit, **Size**, Actions
 - Active downloads table columns: Status, File, Interface, **Size**, Progress, Speed|ETA, Actions
+- **Resizable columns**: All table columns use `Interactive` mode, allowing users to drag borders to adjust widths
 - Interface selection dropdown auto-populates with internet-connected interfaces
 - Batch URL import from file with automatic round-robin interface distribution
 - File size display via HEAD requests (`DownloadEngine.get_download_info()`)
 - Human-readable file size formatting (`_format_file_size()`)
 - Auto-starts next queued download for an interface when current download completes/fails (`_start_next_download_for_interface`)
 - Progress updates via QTimer every 500ms (configurable)
+- **Smart resume**: "Start All" button resumes paused downloads before starting new ones from queue
 
 **State Persistence** (`state_manager.py`)
 - Saves application state to state file with auto-backup (keeps last 10 backups)
 - Auto-saves on application close
-- Restores queued and active downloads on restart (active downloads go back to queue for manual restart)
+- **Queue restoration**: Queued downloads remain in queue when app is reopened
+- **Active downloads restoration**: Active/paused downloads are moved to the **top of the queue** when app is reopened
+  - This ensures previously active downloads get priority when user clicks "Start All"
+  - Downloads resume from where they left off (supports partial file resume via HTTP Range requests)
 - Paths are portable-aware: uses exe directory when frozen, user home when running as Python script
 
 ### Configuration (`config.py`)
@@ -149,6 +154,33 @@ This ensures all HTTP/HTTPS requests from this session originate from the specif
 - Resume: Sets `is_paused=False`, loop continues from same position
 - Cancel: Sets `is_running=False`, closes session, removes partial file
 - True resume (after app restart) uses HTTP Range headers to continue from partial file
+
+### Interface Column Display
+
+Both Queue and Active Downloads tables show the interface in the same format: `"InterfaceName (IP)"`
+
+**Queue table** (`update_queue_table()`):
+```python
+interface_text = f"{download['interface']['name']} ({download['interface']['ip']})"
+```
+
+**Active Downloads table** (`update_active_downloads_table()`):
+```python
+# Look up interface name from source_ip
+source_ip = download['source_ip']
+interface_name = None
+for iface in self.network_interfaces:
+    if iface['ip'] == source_ip:
+        interface_name = iface['name']
+        break
+
+if interface_name:
+    interface_text = f"{interface_name} ({source_ip})"
+else:
+    interface_text = source_ip  # Fallback
+```
+
+This consistency makes it easy to identify which interface each download is using.
 
 ## Round-Robin URL Distribution
 
@@ -278,7 +310,7 @@ The `--clean` flag forces a full rebuild (useful if changes aren't reflected).
 |--------|-------|-------------|
 | Status | 0 | Icon: ↓ (downloading), || (paused), ✓ (completed) |
 | File | 1 | Filename extracted from URL |
-| Interface | 2 | Source IP address |
+| Interface | 2 | Network interface name and IP (consistent with queue table) |
 | Size | 3 | Total file size in human-readable format |
 | Progress | 4 | Progress bar with percentage |
 | Speed \| ETA | 5 | Current speed (MB/s) and estimated time remaining |
@@ -308,3 +340,66 @@ File sizes are persisted to state files:
 # Restoring (defaults to 0 for backward compatibility)
 "file_size": dl.get("file_size", 0)
 ```
+
+**Active Downloads Restoration Logic:**
+When the application is reopened, active downloads are not restored as active/paused downloads. Instead:
+1. They are moved to the **top of the queue** (inserted at position 0 in reverse order)
+2. Regular queued downloads are appended after them
+3. This ensures previously active downloads get priority when user clicks "Start All"
+
+Example from `_restore_state()`:
+```python
+# First, restore active downloads to the TOP of the queue
+active_downloads_to_queue = []
+for dl in state.get("active_downloads", []):
+    download_info = {...}
+    active_downloads_to_queue.append(download_info)
+
+# Insert at the beginning (in reverse to preserve order)
+for download_info in reversed(active_downloads_to_queue):
+    self.queued_downloads.insert(0, download_info)
+
+# Then, restore queued downloads (they go after)
+for dl in state.get("queued_downloads", []):
+    download_info = {...}
+    self.queued_downloads.append(download_info)
+```
+
+### Column Resizing
+All table columns use `Interactive` resize mode to allow user resizing:
+```python
+header.setSectionResizeMode(column_index, QHeaderView.ResizeMode.Interactive)
+```
+
+Additionally, initial column widths are set for better defaults:
+```python
+self.queue_table.setColumnWidth(0, 400)  # URL
+self.queue_table.setColumnWidth(1, 150)  # Interface
+# etc...
+```
+
+The last column stretches to fill remaining space:
+```python
+header.setStretchLastSection(True)
+```
+
+### Resume/Start All Functionality
+The `start_all_downloads()` method has been enhanced to:
+1. **First**: Resume all paused downloads via `self.download_manager.resume_all()`
+2. **Then**: Start new downloads from the queue (existing logic)
+
+This ensures that when user clicks "Start All":
+- Any paused downloads are resumed first
+- Then new downloads from the queue are started (respecting the 1-download-per-interface limit)
+
+**Important**: The `resume_download()` method in `DownloadManager` now checks if the thread is running:
+```python
+if not thread.isRunning():
+    # Thread hasn't started yet, start it now
+    thread.start()
+else:
+    # Thread is running but paused, just resume
+    thread.resume()
+```
+
+This fix was necessary because restored downloads were created but threads were never started, causing resume to fail.

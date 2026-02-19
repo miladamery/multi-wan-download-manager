@@ -11,7 +11,10 @@ A Windows download manager application that can download files through multiple 
 - **Progress Tracking**: Real-time progress bars, speed display, and ETA calculation
 - **File Size Display**: Shows file sizes in human-readable format (B, KB, MB, GB, TB) for queued and active downloads
 - **Speed Limiting**: Set per-download speed limits in MB/s
-- **Pause/Resume**: Pause and resume individual downloads with dedicated Actions column
+- **Pause/Resume**: Pause and resume individual downloads or all downloads at once
+- **Smart Resume**: "Start All" resumes paused downloads before starting new ones from queue
+- **State Persistence**: Application saves queue and active downloads; paused downloads return to top of queue on restart
+- **Resizable Columns**: Drag column borders to adjust table widths to your preference
 - **Network Detection**: Automatically detects all connected network interfaces
 
 ## Requirements
@@ -129,6 +132,24 @@ The executable will be automatically built and attached to the GitHub Release.
    - Click "Pause" to pause individual downloads
    - Click "Resume" to continue paused downloads
    - Click "Pause All" to pause all active downloads
+   - Click "Start All" to resume paused downloads and start new ones from queue
+
+### State Persistence
+
+The application automatically saves your downloads when closed:
+
+- **Queued downloads**: Remain in queue when app is reopened
+- **Active/Paused downloads**: Moved to the **top of the queue** when app is reopened
+  - This ensures previously active downloads get priority when you click "Start All"
+  - Downloads resume from where they left off (supports partial file resume via HTTP Range requests)
+- **File sizes**: Preserved across sessions
+
+**Example workflow:**
+1. Add 6 downloads, click "Start All" → 2 start (1 per interface), 4 stay queued
+2. Click "Pause All" → active downloads pause
+3. Close application
+4. Reopen application → Queue shows: [2 previously active, 4 queued] in that order
+5. Click "Start All" → The 2 previously active downloads start first, then the others follow
 
 ### Setting Up Multiple Network Connections
 
@@ -254,6 +275,9 @@ Potential features for future versions:
 - [x] Automatic interface selection (round-robin) - **IMPLEMENTED**
 - [x] Batch URL import from file - **IMPLEMENTED**
 - [x] File size display - **IMPLEMENTED**
+- [x] Resizable table columns - **IMPLEMENTED**
+- [x] Smart state persistence with queue priority - **IMPLEMENTED**
+- [x] Resume all downloads functionality - **IMPLEMENTED**
 - [ ] Download scheduling (start at specific time)
 - [ ] Download history and logs
 - [ ] Bandwidth usage graphs

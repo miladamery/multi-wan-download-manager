@@ -281,8 +281,16 @@ class DownloadManager:
         if download_id in self.active_downloads:
             download = self.active_downloads[download_id]
             thread = download['thread']
-            thread.resume()
-            download['status'] = 'downloading'
+
+            # Check if thread is already running
+            if not thread.isRunning():
+                # Thread hasn't started yet, start it now
+                download['status'] = 'downloading'
+                thread.start()
+            else:
+                # Thread is running but paused, just resume
+                thread.resume()
+                download['status'] = 'downloading'
 
     def cancel_download(self, download_id: int):
         """Cancel and remove a download."""

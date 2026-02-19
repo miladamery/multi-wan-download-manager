@@ -246,13 +246,20 @@ class DownloadManagerApp(QMainWindow):
         self.queue_table.setColumnCount(5)
         self.queue_table.setHorizontalHeaderLabels(["URL", "Interface", "Speed Limit", "Size", "Actions"])
 
-        # Set column widths
+        # Enable column resizing and set initial widths
         header = self.queue_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        # Set initial column widths (in pixels)
+        self.queue_table.setColumnWidth(0, 400)  # URL
+        self.queue_table.setColumnWidth(1, 150)  # Interface
+        self.queue_table.setColumnWidth(2, 100)  # Speed Limit
+        self.queue_table.setColumnWidth(3, 80)   # Size
+        self.queue_table.setColumnWidth(4, 80)   # Actions
+        header.setStretchLastSection(True)  # Stretch last section to fill space
 
         self.queue_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.queue_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -271,15 +278,24 @@ class DownloadManagerApp(QMainWindow):
         self.active_table.setColumnCount(7)
         self.active_table.setHorizontalHeaderLabels(["Status", "File", "Interface", "Size", "Progress", "Speed | ETA", "Actions"])
 
-        # Set column widths
+        # Enable column resizing and set initial widths
         header = self.active_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
+        # Set initial column widths (in pixels)
+        self.active_table.setColumnWidth(0, 60)   # Status
+        self.active_table.setColumnWidth(1, 250)  # File
+        self.active_table.setColumnWidth(2, 120)  # Interface
+        self.active_table.setColumnWidth(3, 80)   # Size
+        self.active_table.setColumnWidth(4, 150)  # Progress
+        self.active_table.setColumnWidth(5, 120)  # Speed | ETA
+        self.active_table.setColumnWidth(6, 100)  # Actions
+        header.setStretchLastSection(True)  # Stretch last section to fill space
 
         self.active_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.active_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -736,9 +752,15 @@ class DownloadManagerApp(QMainWindow):
             self.update_queue_table()
 
     def start_all_downloads(self):
-        """Start all queued downloads - max 1 per interface at a time."""
+        """Start all queued downloads and resume paused downloads - max 1 per interface at a time."""
+
+        # First, resume all paused downloads
+        self.download_manager.resume_all()
+
+        # Then start new downloads from queue
         if not self.queued_downloads:
-            QMessageBox.information(self, "Info", "No downloads in queue.")
+            # No new downloads to start, but update table in case we resumed paused ones
+            self.update_active_downloads_table()
             return
 
         # Track which interfaces we've started a download for
@@ -842,8 +864,19 @@ class DownloadManagerApp(QMainWindow):
             file_item = QTableWidgetItem(filename)
             self.active_table.setItem(row, 1, file_item)
 
-            # Interface
-            interface_text = download['source_ip']
+            # Interface - look up name from IP
+            source_ip = download['source_ip']
+            interface_name = None
+            # Find interface name matching this IP
+            for iface in self.network_interfaces:
+                if iface['ip'] == source_ip:
+                    interface_name = iface['name']
+                    break
+
+            if interface_name:
+                interface_text = f"{interface_name} ({source_ip})"
+            else:
+                interface_text = source_ip  # Fallback to just IP if not found
             interface_item = QTableWidgetItem(interface_text)
             self.active_table.setItem(row, 2, interface_item)
 
@@ -1041,8 +1074,9 @@ class DownloadManagerApp(QMainWindow):
         # Restore next_id
         self.download_manager.next_id = state.get("next_id", 1)
 
-        # Restore queued downloads
-        for dl in state.get("queued_downloads", []):
+        # First, restore active downloads to the TOP of the queue (in reverse order to maintain original order)
+        active_downloads_to_queue = []
+        for dl in state.get("active_downloads", []):
             download_info = {
                 "url": dl["url"],
                 "interface": dl["interface"],
@@ -1050,11 +1084,14 @@ class DownloadManagerApp(QMainWindow):
                 "file_size": dl.get("file_size", 0),
                 "status": "queued"
             }
-            self.queued_downloads.append(download_info)
+            active_downloads_to_queue.append(download_info)
 
-        # Restore active downloads - add them to queue so they can be restarted
-        # The download_engine will automatically resume from partial files
-        for dl in state.get("active_downloads", []):
+        # Insert at the beginning of the queue (in reverse to preserve order)
+        for download_info in reversed(active_downloads_to_queue):
+            self.queued_downloads.insert(0, download_info)
+
+        # Then, restore queued downloads (they go after the previously active ones)
+        for dl in state.get("queued_downloads", []):
             download_info = {
                 "url": dl["url"],
                 "interface": dl["interface"],
