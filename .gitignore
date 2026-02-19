@@ -15,7 +15,7 @@ pip-delete-this-directory.txt
 # PyInstaller
 build/
 dist/
-*.spec
+# Note: downloader.spec is manually maintained and tracked
 
 # Virtual environments
 venv/
