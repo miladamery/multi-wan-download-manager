@@ -70,11 +70,15 @@ Tests that downloads are correctly bound to each detected interface by verifying
 - One download per interface limitation enforced in GUI's `start_all_downloads()`
 
 **GUI** (`download_manager_ui.py`)
-- PyQt6 `DownloadManagerApp` main window
-- Tabbed URL input: "Single URL" and "Batch URLs (Round-Robin)" tabs
-- Two tables: `queue_table` (pending downloads) and `active_table` (running downloads)
+- PyQt6 `DownloadManagerApp` main window with **tabbed interface**: "Downloads" and "History" tabs
+- **Downloads Tab**: Contains all download management features
+  - Tabbed URL input: "Single URL" and "Batch URLs (Round-Robin)" tabs
+  - Two tables: `queue_table` (pending downloads) and `active_table` (running downloads)
 - Queue table columns: URL, Interface, Speed Limit, **Size**, Actions
+  - Actions: **Move Up (↑)**, **Move Down (↓)**, **Remove**
 - Active downloads table columns: Status, File, Interface, **Size**, Progress, Speed|ETA, Actions
+  - Downloading: **Pause** button
+  - Paused: **Resume** and **To Queue** buttons
 - **Resizable columns**: All table columns use `Interactive` mode, allowing users to drag borders to adjust widths
 - Interface selection dropdown auto-populates with internet-connected interfaces
 - Batch URL import from file with automatic round-robin interface distribution
@@ -83,6 +87,7 @@ Tests that downloads are correctly bound to each detected interface by verifying
 - Auto-starts next queued download for an interface when current download completes/fails (`_start_next_download_for_interface`)
 - Progress updates via QTimer every 500ms (configurable)
 - **Smart resume**: "Start All" button resumes paused downloads before starting new ones from queue
+- **History Tab**: Download history with full details and management features
 
 **State Persistence** (`state_manager.py`)
 - Saves application state to state file with auto-backup (keeps last 10 backups)
@@ -303,7 +308,12 @@ The `--clean` flag forces a full rebuild (useful if changes aren't reflected).
 | Interface | 1 | Network interface name and IP |
 | Speed Limit | 2 | Per-download speed limit (MB/s) or "Unlimited" |
 | Size | 3 | File size in human-readable format (B/KB/MB/GB/TB) |
-| Actions | 4 | Remove button |
+| Actions | 4 | **Move Up (↑)**, **Move Down (↓)**, **Remove** buttons |
+
+**Actions**:
+- Move Up (↑): Moves item up in queue (disabled for first row)
+- Move Down (↓): Moves item down in queue (disabled for last row)
+- Remove: Deletes item from queue
 
 ### Active Downloads Table (`active_table`)
 | Column | Index | Description |
@@ -314,7 +324,26 @@ The `--clean` flag forces a full rebuild (useful if changes aren't reflected).
 | Size | 3 | Total file size in human-readable format |
 | Progress | 4 | Progress bar with percentage |
 | Speed \| ETA | 5 | Current speed (MB/s) and estimated time remaining |
-| Actions | 6 | Pause/Resume/Remove buttons |
+| Actions | 6 | Pause, Resume, To Queue buttons |
+
+**Actions** (dynamic based on status):
+- Downloading: **Pause** button
+- Paused: **Resume** and **To Queue** buttons
+
+### History Table (`history_table`)
+| Column | Index | Description |
+|--------|-------|-------------|
+| Date/Time | 0 | Completion date and time (YYYY-MM-DD HH:MM:SS) |
+| File | 1 | Downloaded filename |
+| Interface | 2 | Network interface name and IP |
+| Size | 3 | File size in human-readable format |
+| URL | 4 | Full download URL (shown completely, resizable) |
+| Actions | 5 | **View**, **Copy URL**, **Re-download** buttons |
+
+**Actions**:
+- View: Opens details dialog with full download information
+- Copy URL: Copies URL to clipboard
+- Re-download: Adds URL back to queue with same settings
 
 ## Important Implementation Notes
 
@@ -403,3 +432,177 @@ else:
 ```
 
 This fix was necessary because restored downloads were created but threads were never started, causing resume to fail.
+
+## Download History
+
+### Overview
+The download history feature tracks all completed downloads, providing a permanent record of download activity. History is stored in the state file and persists across application restarts.
+
+### History Data Structure
+Each history entry contains:
+```python
+{
+    'download_id': int,              # Unique download ID
+    'url': str,                      # Download URL
+    'filename': str,                 # Downloaded filename
+    'filepath': str,                 # Full path to downloaded file
+    'interface': {
+        'name': str,                 # Interface name (e.g., "Ethernet")
+        'ip': str                    # Interface IP address
+    },
+    'file_size': int,                # File size in bytes
+    'completion_time': str,          # ISO format timestamp
+    'speed_limit': float or None     # Speed limit in MB/s
+}
+```
+
+### History Table Columns
+| Column | Index | Description |
+|--------|-------|-------------|
+| Date/Time | 0 | Completion date and time (YYYY-MM-DD HH:MM:SS) |
+| File | 1 | Downloaded filename |
+| Interface | 2 | Network interface name and IP |
+| Size | 3 | File size in human-readable format |
+| URL | 4 | Full download URL (shown completely) |
+| Actions | 5 | View, Copy URL, Re-download buttons |
+
+### History Features
+
+**View Details** (`view_history_details(row)`):
+- Opens dialog showing complete download information
+- Displays: File, URL, File Path, Interface, Size, Speed Limit, Completion Time
+- If file exists: "Open File" and "Open Folder" buttons available
+- Uses `os.startfile()` to open files/folders on Windows
+
+**Copy URL** (`copy_url_from_history(row)`):
+- Copies full URL to system clipboard
+- Shows brief confirmation in status bar
+- Useful for sharing or re-downloading in other tools
+
+**Re-download** (`redownload_from_history(row)`):
+- Adds URL back to download queue
+- Uses same interface and speed limit as original download
+- Fetches current file size via HEAD request before adding
+- Shows confirmation message with filename
+
+**Clear History** (`clear_download_history()`):
+- Removes all history entries with confirmation dialog
+- Shows count of entries to be deleted
+- Action requires explicit confirmation
+- Cannot be undone
+
+**Export History** (`export_download_history()`):
+- Exports all history entries to CSV file
+- Columns: Date/Time, Filename, URL, Interface, IP, File Size (Bytes), Speed Limit, File Path
+- User selects destination via file dialog
+- Shows success/error message with entry count
+
+### State Persistence
+History is saved in the state file under the `download_history` key:
+```python
+# Saving (in _get_current_state)
+state["download_history"] = []
+for entry in self.download_history:
+    state["download_history"].append({...})
+
+# Restoring (in _restore_state)
+for entry in state.get("download_history", []):
+    self.download_history.append({...})
+```
+
+**Unlimited Retention**: History is never automatically deleted. Users must manually clear history.
+
+### History Capture Point
+History entries are created in `on_download_completed()` **before** showing the completion message:
+```python
+# Create history entry
+history_entry = {
+    'download_id': download_id,
+    'url': download['url'],
+    'filename': os.path.basename(filepath),
+    'filepath': filepath,
+    'interface': {...},
+    'file_size': thread.total_bytes,
+    'completion_time': datetime.now().isoformat(),
+    'speed_limit': thread.speed_limit
+}
+
+# Add to history (newest first)
+self.download_history.insert(0, history_entry)
+self.update_history_table()
+```
+
+## Queue Management
+
+### Queue Reordering
+
+**Purpose**: Allow users to change download priority in the queue by reordering items.
+
+**Implementation**:
+- `move_queue_up(row)`: Swaps item with previous position (disabled for row 0)
+- `move_queue_down(row)`: Swaps item with next position (disabled for last row)
+
+**Button States**:
+- **Move Up (↑)**: Disabled on first row (`row == 0`)
+- **Move Down (↓)**: Disabled on last row (`row == len(queued_downloads) - 1`)
+
+**Algorithm**: Simple swap operation:
+```python
+# Move up
+self.queued_downloads[row], self.queued_downloads[row - 1] = \
+    self.queued_downloads[row - 1], self.queued_downloads[row]
+
+# Move down
+self.queued_downloads[row], self.queued_downloads[row + 1] = \
+    self.queued_downloads[row + 1], self.queued_downloads[row]
+```
+
+**State Persistence**: Queue order is automatically preserved in the state file since `queued_downloads` is a list. Order is maintained when saving/restoring.
+
+**Impact**: Reordered items start in new order when "Start All" is clicked. This affects which downloads get priority for each interface.
+
+### Move Paused Downloads to Queue
+
+**Purpose**: Allow users to return paused downloads to the queue for re-prioritization or later resumption.
+
+**Implementation** (`move_paused_to_queue(download_id)`):
+
+1. **Capture download info**:
+   - URL, interface (name + IP), speed limit
+   - Progress info (total bytes, downloaded bytes)
+   - File path (for partial file resume)
+
+2. **Cancel the download**:
+   - Calls `cancel_download()` to stop the thread
+   - **Preserves partial file** on disk for resume
+
+3. **Remove from active**:
+   - Deletes from `active_downloads` dictionary
+
+4. **Add to queue**:
+   - Appends to `queued_downloads` list
+   - Maintains original settings
+
+5. **Update UI**:
+   - Refreshes both active downloads and queue tables
+   - Updates status bar
+   - Shows confirmation message
+
+**Partial File Preservation**: When moved to queue, the partial download file remains on disk. When the download is resumed from the queue, the `DownloadEngine` detects the existing file and uses HTTP Range headers to continue from the saved position.
+
+**Example Flow**:
+```python
+# User pauses 500MB download at 30%
+# User clicks "To Queue"
+# Download cancelled, partial file (~150MB) preserved
+# User reorders queue to prioritize
+# User starts queue
+# Download resumes from 30%, not from beginning
+```
+
+**Use Cases**:
+- Defer a download to process other items first
+- Re-prioritize downloads without losing progress
+- Pause and move to queue when bandwidth is needed elsewhere
+- Recover from network issues by moving to end of queue
+
