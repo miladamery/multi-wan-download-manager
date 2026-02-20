@@ -12,8 +12,10 @@ A Windows download manager application that can download files through multiple 
 - **File Size Display**: Shows file sizes in human-readable format (B, KB, MB, GB, TB) for queued and active downloads
 - **Speed Limiting**: Set per-download speed limits in MB/s
 - **Pause/Resume**: Pause and resume individual downloads or all downloads at once
+- **Move Paused to Queue**: Return paused downloads to queue for re-prioritization without losing progress
 - **Smart Resume**: "Start All" resumes paused downloads before starting new ones from queue
 - **State Persistence**: Application saves queue and active downloads; paused downloads return to top of queue on restart
+- **Download History**: View complete download history with details, export to CSV, copy URLs, and re-download
 - **Resizable Columns**: Drag column borders to adjust table widths to your preference
 - **Network Detection**: Automatically detects all connected network interfaces
 
@@ -133,6 +135,28 @@ The executable will be automatically built and attached to the GitHub Release.
    - Click "Resume" to continue paused downloads
    - Click "Pause All" to pause all active downloads
    - Click "Start All" to resume paused downloads and start new ones from queue
+
+### Download History
+
+The application maintains a complete history of all completed downloads:
+
+**View History Tab**:
+- Switch to the "History" tab to see all completed downloads
+- Shows: Date/Time, File name, Interface used, File size, and URL
+- Sortable by date (newest first)
+
+**History Actions**:
+- **View Details**: Click "View" button to see full download information including file path
+- **Copy URL**: Copy download URL to clipboard for sharing
+- **Re-download**: Add URL back to queue with same interface and speed settings
+- **Clear History**: Remove all history entries (requires confirmation)
+- **Export to CSV**: Export entire history to CSV file for record-keeping
+
+**History Features**:
+- History persists across application restarts
+- Export includes: Date, Filename, URL, Interface, IP, File Size, Speed Limit, File Path
+- Re-download fetches current file size before adding to queue
+- View Details shows file path with "Open File" and "Open Folder" buttons if file exists
 
 ### State Persistence
 
@@ -278,8 +302,8 @@ Potential features for future versions:
 - [x] Resizable table columns - **IMPLEMENTED**
 - [x] Smart state persistence with queue priority - **IMPLEMENTED**
 - [x] Resume all downloads functionality - **IMPLEMENTED**
+- [x] Download history and logs - **IMPLEMENTED**
 - [ ] Download scheduling (start at specific time)
-- [ ] Download history and logs
 - [ ] Bandwidth usage graphs
 - [ ] Dark mode theme
 - [ ] Multi-language support
