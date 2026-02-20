@@ -18,6 +18,11 @@ python main.py
 pip install -r requirements.txt
 ```
 
+For development with linting and type checking tools:
+```bash
+pip install -r requirements-dev.txt
+```
+
 ### Building Portable Executable
 ```bash
 pyinstaller downloader.spec
@@ -110,6 +115,15 @@ Key settings:
 - `SSL_VERIFY` - Set to `False` by default (disables SSL verification warnings)
 - `STATE_DIR` / `STATE_FILE` - State persistence location (relative to base dir)
 - `INTERNET_TEST_URL` - URL for connectivity testing (httpbin.org/ip)
+- `setup_logging()` - Configures logging with file and console handlers
+
+### Utilities (`utils.py`)
+
+Common utility functions used across the application:
+- `format_file_size(size_bytes: int) -> str` - Convert bytes to human-readable format (B/KB/MB/GB/TB)
+- `format_speed(bytes_per_second: float) -> str` - Convert speed to human-readable format (B/s/KB/s/MB/s)
+- `format_time(seconds: float) -> str` - Convert seconds to HH:MM:SS format
+- `get_interface_name(interfaces: List, ip: str) -> Optional[str]` - Find interface name by IP
 
 **Portable Path Handling:** The `_get_portable_path()` function detects if running as a frozen executable (`sys.frozen`) and adjusts paths accordingly. This allows the app to create `Downloads` and `.multiwan_downloader` folders alongside the exe for true portability.
 
@@ -228,16 +242,10 @@ file_size = int(response.headers.get('content-length', 0))
 ```
 
 ### Display Formatting
-`_format_file_size()` converts bytes to human-readable format:
+`format_file_size()` from `utils.py` converts bytes to human-readable format:
 ```python
-def _format_file_size(self, size_bytes: int) -> str:
-    if size_bytes == 0:
-        return "Unknown"
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if size_bytes < 1024.0:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024.0
-    return f"{size_bytes:.1f} PB"
+from utils import format_file_size
+size_text = format_file_size(file_size)  # e.g., "2.0 MB"
 ```
 
 Examples:
@@ -432,6 +440,104 @@ else:
 ```
 
 This fix was necessary because restored downloads were created but threads were never started, causing resume to fail.
+
+## Logging
+
+### Overview
+The application uses Python's built-in `logging` module for all diagnostic output instead of `print()` statements.
+
+### Configuration
+Logging is initialized in `main.py` via `config.setup_logging()`:
+- **File Handler**: Writes to `STATE_DIR/multiwan_downloader.log` at DEBUG level
+- **Console Handler**: Outputs to console at INFO level
+- **Format**: `%(asctime)s - %(name)s - %(levelname)s - %(message)s`
+
+### Usage Pattern
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+logger.info("Download started")
+logger.error("Download failed: %s", error_message)
+logger.debug("Interface detected: %s", interface)
+```
+
+### Log Levels
+- `DEBUG`: Detailed information for diagnosing problems
+- `INFO`: Confirmation that things are working as expected
+- `WARNING`: Something unexpected happened (software still working)
+- `ERROR`: Serious problem, software has not been able to perform some function
+
+## Thread Safety
+
+### Overview
+The GUI uses threading locks to protect shared data structures from race conditions when multiple threads access them concurrently.
+
+### Protected Data Structures
+The following data structures are protected with locks:
+- `self.queued_downloads` - Protected by `self.queue_lock`
+- `self.active_downloads` - Protected by `self.active_lock` (in DownloadManager)
+- `self.started_interfaces` - Protected by `self.interface_lock` (local in methods)
+
+### Lock Usage Pattern
+```python
+from threading import Lock
+
+def __init__(self):
+    self.queue_lock = Lock()
+    self.queued_downloads = []
+
+def modify_queue(self):
+    with self.queue_lock:
+        # Safe queue operations
+        self.queued_downloads.append(item)
+        # OR read then modify outside lock
+        item = self.queued_downloads[0]
+
+    # Perform long operations outside lock
+    process_item(item)
+```
+
+### Critical Sections
+- Queue modifications (add/remove/move operations)
+- Queue reads for table updates (uses snapshot pattern)
+- Download starts from queue
+- State restoration
+
+### Best Practices
+1. **Minimize lock scope**: Hold locks only when accessing shared data, release before I/O or long operations
+2. **Use snapshot pattern**: Copy data while holding lock, process after releasing
+3. **Avoid nested locks**: Never acquire multiple locks at once to prevent deadlocks
+
+## Error Handling
+
+### Specific Exceptions
+The codebase uses specific exception types instead of bare `except Exception:`:
+
+```python
+# Network errors
+except requests.exceptions.RequestException as e:
+    logger.error("HTTP request failed: %s", e)
+
+# File operations
+except OSError as e:
+    logger.error("File operation failed: %s", e)
+
+# JSON parsing
+except json.JSONDecodeError as e:
+    logger.error("Invalid JSON: %s", e)
+
+# CSV operations
+except (OSError, csv.Error) as e:
+    logger.error("CSV export failed: %s", e)
+```
+
+### Exception Types by Module
+- **download_engine.py**: `requests.exceptions.RequestException`, `OSError`, `ValueError`, `KeyError`
+- **state_manager.py**: `json.JSONDecodeError`, `OSError`, `json.JSONEncodeError`, `TypeError`
+- **network_detector.py**: `OSError`, `psutil.Error`, `requests.exceptions.RequestException`
+- **download_thread.py**: `OSError`, `RuntimeError`
 
 ## Download History
 
