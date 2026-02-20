@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QProgressBar, QComboBox, QSpinBox, QHeaderView, QGroupBox,
     QFileDialog, QMessageBox, QFrame, QStatusBar, QCheckBox,
-    QTabWidget, QTextEdit, QProgressDialog
+    QTabWidget, QTextEdit, QProgressDialog, QDialog
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QIcon, QFont, QColor
@@ -39,6 +39,7 @@ class DownloadManagerApp(QMainWindow):
         self.download_manager = DownloadManager()
         self.network_interfaces = []
         self.queued_downloads = []  # List of queued download info
+        self.download_history = []  # List of completed download entries
 
         # State management
         self.state_manager = StateManager()
@@ -69,17 +70,26 @@ class DownloadManagerApp(QMainWindow):
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(10, 10, 10, 10)
 
-        # Add URL input section (tabbed for single/batch)
-        main_layout.addWidget(self.create_tabbed_url_section())
+        # Create main tab widget (Downloads | History)
+        main_tab_widget = QTabWidget()
 
-        # Add download queue section
-        main_layout.addWidget(self.create_queue_section())
+        # Tab 1: Downloads (existing content)
+        downloads_tab = QWidget()
+        downloads_layout = QVBoxLayout(downloads_tab)
+        downloads_layout.addWidget(self.create_tabbed_url_section())
+        downloads_layout.addWidget(self.create_queue_section())
+        downloads_layout.addWidget(self.create_active_downloads_section())
+        downloads_layout.addWidget(self.create_control_buttons())
 
-        # Add active downloads section
-        main_layout.addWidget(self.create_active_downloads_section())
+        # Tab 2: History (new)
+        history_tab = QWidget()
+        history_layout = QVBoxLayout(history_tab)
+        history_layout.addWidget(self.create_history_section())
 
-        # Add control buttons
-        main_layout.addWidget(self.create_control_buttons())
+        main_tab_widget.addTab(downloads_tab, "Downloads")
+        main_tab_widget.addTab(history_tab, "History")
+
+        main_layout.addWidget(main_tab_widget)
 
         # Add status bar
         self.status_bar = QStatusBar()
@@ -258,7 +268,7 @@ class DownloadManagerApp(QMainWindow):
         self.queue_table.setColumnWidth(1, 150)  # Interface
         self.queue_table.setColumnWidth(2, 100)  # Speed Limit
         self.queue_table.setColumnWidth(3, 80)   # Size
-        self.queue_table.setColumnWidth(4, 80)   # Actions
+        self.queue_table.setColumnWidth(4, 180)   # Actions (wider for Up/Down buttons)
         header.setStretchLastSection(True)  # Stretch last section to fill space
 
         self.queue_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -294,7 +304,7 @@ class DownloadManagerApp(QMainWindow):
         self.active_table.setColumnWidth(3, 80)   # Size
         self.active_table.setColumnWidth(4, 150)  # Progress
         self.active_table.setColumnWidth(5, 120)  # Speed | ETA
-        self.active_table.setColumnWidth(6, 100)  # Actions
+        self.active_table.setColumnWidth(6, 150)  # Actions (wider for additional button)
         header.setStretchLastSection(True)  # Stretch last section to fill space
 
         self.active_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -329,6 +339,55 @@ class DownloadManagerApp(QMainWindow):
 
         widget.setLayout(layout)
         return widget
+
+    def create_history_section(self) -> QGroupBox:
+        """Create the download history section."""
+        group = QGroupBox("Download History")
+        layout = QVBoxLayout()
+
+        # History table
+        self.history_table = QTableWidget()
+        self.history_table.setColumnCount(6)
+        self.history_table.setHorizontalHeaderLabels([
+            "Date/Time", "File", "Interface", "Size", "URL", "Actions"
+        ])
+
+        # Enable column resizing
+        header = self.history_table.horizontalHeader()
+        for i in range(6):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+
+        # Set initial column widths
+        self.history_table.setColumnWidth(0, 150)  # Date/Time
+        self.history_table.setColumnWidth(1, 200)  # File
+        self.history_table.setColumnWidth(2, 120)  # Interface
+        self.history_table.setColumnWidth(3, 80)   # Size
+        self.history_table.setColumnWidth(4, 400)  # URL
+        self.history_table.setColumnWidth(5, 200)  # Actions
+        header.setStretchLastSection(True)
+
+        self.history_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.history_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        layout.addWidget(self.history_table)
+
+        # Control buttons
+        button_layout = QHBoxLayout()
+
+        clear_history_btn = QPushButton("Clear History")
+        clear_history_btn.clicked.connect(self.clear_download_history)
+
+        export_history_btn = QPushButton("Export History")
+        export_history_btn.clicked.connect(self.export_download_history)
+
+        button_layout.addWidget(clear_history_btn)
+        button_layout.addWidget(export_history_btn)
+        button_layout.addStretch()
+
+        layout.addLayout(button_layout)
+
+        group.setLayout(layout)
+        return group
 
     def refresh_network_interfaces(self):
         """Refresh the list of available network interfaces with internet access."""
@@ -740,15 +799,55 @@ class DownloadManagerApp(QMainWindow):
             size_item = QTableWidgetItem(size_text)
             self.queue_table.setItem(row, 3, size_item)
 
-            # Actions (column 4)
+            # Actions (column 4) - Move Up, Move Down, Remove
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(4, 2, 4, 2)
+
+            # Move Up button (disable for first row)
+            up_btn = QPushButton("↑")
+            up_btn.setMaximumWidth(40)
+            up_btn.setEnabled(row > 0)  # Disable for first row
+            up_btn.clicked.connect(lambda checked, r=row: self.move_queue_up(r))
+            actions_layout.addWidget(up_btn)
+
+            # Move Down button (disable for last row)
+            down_btn = QPushButton("↓")
+            down_btn.setMaximumWidth(40)
+            down_btn.setEnabled(row < len(self.queued_downloads) - 1)  # Disable for last row
+            down_btn.clicked.connect(lambda checked, r=row: self.move_queue_down(r))
+            actions_layout.addWidget(down_btn)
+
+            # Remove button
             remove_btn = QPushButton("Remove")
+            remove_btn.setMaximumWidth(60)
             remove_btn.clicked.connect(lambda checked, r=row: self.remove_from_queue(r))
-            self.queue_table.setCellWidget(row, 4, remove_btn)
+            actions_layout.addWidget(remove_btn)
+
+            actions_layout.addStretch()
+
+            self.queue_table.setCellWidget(row, 4, actions_widget)
 
     def remove_from_queue(self, row: int):
         """Remove a download from the queue."""
         if 0 <= row < len(self.queued_downloads):
             del self.queued_downloads[row]
+            self.update_queue_table()
+
+    def move_queue_up(self, row: int):
+        """Move a queue item up by one position."""
+        if 0 < row < len(self.queued_downloads):
+            # Swap with previous item
+            self.queued_downloads[row], self.queued_downloads[row - 1] = \
+                self.queued_downloads[row - 1], self.queued_downloads[row]
+            self.update_queue_table()
+
+    def move_queue_down(self, row: int):
+        """Move a queue item down by one position."""
+        if 0 <= row < len(self.queued_downloads) - 1:
+            # Swap with next item
+            self.queued_downloads[row], self.queued_downloads[row + 1] = \
+                self.queued_downloads[row + 1], self.queued_downloads[row]
             self.update_queue_table()
 
     def start_all_downloads(self):
@@ -904,9 +1003,90 @@ class DownloadManagerApp(QMainWindow):
                 pause_btn.clicked.connect(lambda checked, did=download_id: self.pause_download(did))
                 self.active_table.setCellWidget(row, 6, pause_btn)
             elif download['status'] == 'paused':
+                # Create actions widget with multiple buttons
+                actions_widget = QWidget()
+                actions_layout = QHBoxLayout(actions_widget)
+                actions_layout.setContentsMargins(4, 2, 4, 2)
+
+                # Resume button
                 resume_btn = QPushButton("Resume")
+                resume_btn.setMaximumWidth(60)
                 resume_btn.clicked.connect(lambda checked, did=download_id: self.resume_download(did))
-                self.active_table.setCellWidget(row, 6, resume_btn)
+                actions_layout.addWidget(resume_btn)
+
+                # Move to Queue button
+                move_to_queue_btn = QPushButton("To Queue")
+                move_to_queue_btn.setMaximumWidth(70)
+                move_to_queue_btn.clicked.connect(lambda checked, did=download_id: self.move_paused_to_queue(did))
+                actions_layout.addWidget(move_to_queue_btn)
+
+                actions_layout.addStretch()
+
+                self.active_table.setCellWidget(row, 6, actions_widget)
+
+    def update_history_table(self):
+        """Update the history table with download history."""
+        self.history_table.setRowCount(len(self.download_history))
+
+        for row, entry in enumerate(self.download_history):
+            # Date/Time
+            completion_time = entry.get('completion_time', 'Unknown')
+            # Parse ISO format and display in readable format
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(completion_time)
+                time_text = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except:
+                time_text = completion_time
+
+            time_item = QTableWidgetItem(time_text)
+            self.history_table.setItem(row, 0, time_item)
+
+            # File
+            filename = entry.get('filename', 'Unknown')
+            file_item = QTableWidgetItem(filename)
+            self.history_table.setItem(row, 1, file_item)
+
+            # Interface
+            interface = entry.get('interface', {})
+            interface_text = f"{interface.get('name', 'Unknown')} ({interface.get('ip', 'Unknown')})"
+            interface_item = QTableWidgetItem(interface_text)
+            self.history_table.setItem(row, 2, interface_item)
+
+            # Size
+            file_size = entry.get('file_size', 0)
+            size_text = self._format_file_size(file_size)
+            size_item = QTableWidgetItem(size_text)
+            self.history_table.setItem(row, 3, size_item)
+
+            # URL - show full URL
+            url = entry.get('url', 'Unknown')
+            url_item = QTableWidgetItem(url)
+            self.history_table.setItem(row, 4, url_item)
+
+            # Actions (View Details, Copy URL, Re-download)
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(4, 2, 4, 2)
+
+            view_btn = QPushButton("View")
+            view_btn.setMaximumWidth(50)
+            view_btn.clicked.connect(lambda checked, r=row: self.view_history_details(r))
+            actions_layout.addWidget(view_btn)
+
+            copy_btn = QPushButton("Copy URL")
+            copy_btn.setMaximumWidth(70)
+            copy_btn.clicked.connect(lambda checked, r=row: self.copy_url_from_history(r))
+            actions_layout.addWidget(copy_btn)
+
+            redownload_btn = QPushButton("Re-download")
+            redownload_btn.setMaximumWidth(80)
+            redownload_btn.clicked.connect(lambda checked, r=row: self.redownload_from_history(r))
+            actions_layout.addWidget(redownload_btn)
+
+            actions_layout.addStretch()
+
+            self.history_table.setCellWidget(row, 5, actions_widget)
 
     def pause_download(self, download_id: int):
         """Pause a specific download."""
@@ -916,6 +1096,59 @@ class DownloadManagerApp(QMainWindow):
         """Resume a paused download."""
         self.download_manager.resume_download(download_id)
 
+    def move_paused_to_queue(self, download_id: int):
+        """Move a paused download back to the queue."""
+        # Get the download
+        download = self.download_manager.get_download(download_id)
+        if not download:
+            return
+
+        # Get interface details
+        interface_ip = download['source_ip']
+        interface_name = None
+        for iface in self.network_interfaces:
+            if iface['ip'] == interface_ip:
+                interface_name = iface['name']
+                break
+
+        # Get progress info to preserve partial file info
+        progress = download['thread'].get_progress_info()
+
+        # Create download info for queue
+        download_info = {
+            'url': download['url'],
+            'interface': {
+                'name': interface_name or interface_ip,
+                'ip': interface_ip
+            },
+            'speed_limit': download['thread'].speed_limit,
+            'file_size': progress.get('total', 0),
+            'status': 'queued'
+        }
+
+        # Cancel the download (keeps partial file for resume)
+        self.download_manager.cancel_download(download_id)
+
+        # Remove from active downloads
+        if download_id in self.download_manager.active_downloads:
+            del self.download_manager.active_downloads[download_id]
+
+        # Add to queue
+        self.queued_downloads.append(download_info)
+
+        # Update UI
+        self.update_active_downloads_table()
+        self.update_queue_table()
+        self.update_status_bar()
+
+        # Show confirmation
+        QMessageBox.information(
+            self,
+            "Moved to Queue",
+            f"Download moved back to queue:\n{download['url']}\n\n"
+            f"Progress will be preserved when resumed."
+        )
+
     def on_download_progress(self, download_id: int, percentage: int, downloaded: int,
                             total: int, speed: float, eta: str):
         """Handle download progress updates."""
@@ -924,10 +1157,43 @@ class DownloadManagerApp(QMainWindow):
 
     def on_download_completed(self, download_id: int, filepath: str):
         """Handle download completion."""
+        from datetime import datetime
+
         # Get the interface for this download
         download = self.download_manager.get_download(download_id)
         interface_ip = download['source_ip'] if download else None
 
+        # ===== ADD TO HISTORY =====
+        if download:
+            thread = download['thread']
+
+            # Get interface details
+            interface_name = None
+            for iface in self.network_interfaces:
+                if iface['ip'] == interface_ip:
+                    interface_name = iface['name']
+                    break
+
+            # Create history entry
+            history_entry = {
+                'download_id': download_id,
+                'url': download['url'],
+                'filename': os.path.basename(filepath),
+                'filepath': filepath,
+                'interface': {
+                    'name': interface_name or interface_ip,
+                    'ip': interface_ip
+                },
+                'file_size': thread.total_bytes,
+                'completion_time': datetime.now().isoformat(),
+                'speed_limit': thread.speed_limit
+            }
+
+            # Add to history (newest first)
+            self.download_history.insert(0, history_entry)
+            self.update_history_table()
+
+        # ===== EXISTING CODE =====
         self.update_status_bar()
         QMessageBox.information(self, "Download Complete",
                                f"Download saved to:\n{filepath}")
@@ -1002,6 +1268,185 @@ class DownloadManagerApp(QMainWindow):
                 self.update_queue_table()
                 break  # Only start one download per call
 
+    def view_history_details(self, row: int):
+        """Show detailed information about a history entry."""
+        if 0 <= row < len(self.download_history):
+            entry = self.download_history[row]
+
+            details = QDialog(self)
+            details.setWindowTitle("Download Details")
+            details.setMinimumWidth(500)
+            layout = QVBoxLayout(details)
+
+            # Build details text
+            info_text = f"""
+            <h2>Download Information</h2>
+            <table border="0" cellpadding="5">
+            <tr><td><b>File:</b></td><td>{entry.get('filename', 'Unknown')}</td></tr>
+            <tr><td><b>URL:</b></td><td>{entry.get('url', 'Unknown')}</td></tr>
+            <tr><td><b>File Path:</b></td><td>{entry.get('filepath', 'Unknown')}</td></tr>
+            <tr><td><b>Interface:</b></td><td>{entry['interface'].get('name', 'Unknown')} ({entry['interface'].get('ip', 'Unknown')})</td></tr>
+            <tr><td><b>File Size:</b></td><td>{self._format_file_size(entry.get('file_size', 0))}</td></tr>
+            <tr><td><b>Speed Limit:</b></td><td>{entry.get('speed_limit', 'Unlimited') if entry.get('speed_limit') else 'Unlimited'} MB/s</td></tr>
+            <tr><td><b>Completed:</b></td><td>{entry.get('completion_time', 'Unknown')}</td></tr>
+            </table>
+            """
+
+            label = QLabel(info_text)
+            label.setTextFormat(Qt.TextFormat.RichText)
+            layout.addWidget(label)
+
+            # Open file location button
+            filepath = entry.get('filepath', '')
+            if filepath and os.path.exists(filepath):
+                btn_layout = QHBoxLayout()
+
+                open_file_btn = QPushButton("Open File")
+                open_file_btn.clicked.connect(lambda: os.startfile(filepath))
+
+                open_folder_btn = QPushButton("Open Folder")
+                open_folder_btn.clicked.connect(lambda: os.startfile(os.path.dirname(filepath)))
+
+                btn_layout.addWidget(open_file_btn)
+                btn_layout.addWidget(open_folder_btn)
+                btn_layout.addStretch()
+                layout.addLayout(btn_layout)
+
+            # Close button
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(details.accept)
+            layout.addWidget(close_btn)
+
+            details.exec()
+
+    def copy_url_from_history(self, row: int):
+        """Copy the URL from a history entry to clipboard."""
+        if 0 <= row < len(self.download_history):
+            entry = self.download_history[row]
+            url = entry.get('url', '')
+            if url:
+                clipboard = QApplication.clipboard()
+                clipboard.setText(url)
+                # Show brief confirmation
+                self.status_bar.showMessage(f"URL copied: {url[:50]}...", 3000)
+
+    def redownload_from_history(self, row: int):
+        """Re-download a file from history."""
+        if 0 <= row < len(self.download_history):
+            entry = self.download_history[row]
+
+            url = entry['url']
+            interface = entry['interface']
+            speed_limit = entry.get('speed_limit')
+
+            # Fetch current file size
+            download_engine = DownloadEngine()
+            file_size = 0
+            try:
+                info = download_engine.get_download_info(url, interface['ip'])
+                if info.get('success'):
+                    file_size = info.get('file_size', 0)
+            except Exception:
+                file_size = 0
+
+            # Add to queue
+            download_info = {
+                'url': url,
+                'interface': interface,
+                'speed_limit': speed_limit,
+                'file_size': file_size,
+                'status': 'queued'
+            }
+
+            self.queued_downloads.append(download_info)
+            self.update_queue_table()
+
+            # Show confirmation
+            QMessageBox.information(
+                self,
+                "Added to Queue",
+                f"Added to download queue:\n{entry.get('filename', url)}"
+            )
+
+    def clear_download_history(self):
+        """Clear all download history after confirmation."""
+        if not self.download_history:
+            QMessageBox.information(self, "Clear History", "History is already empty.")
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Clear History",
+            f"Are you sure you want to clear {len(self.download_history)} history entries?\n\n"
+            "This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.download_history.clear()
+            self.update_history_table()
+            QMessageBox.information(self, "Clear History", "Download history cleared.")
+
+    def export_download_history(self):
+        """Export download history to a CSV file."""
+        if not self.download_history:
+            QMessageBox.information(self, "Export History", "No history to export.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Download History",
+            "download_history.csv",
+            "CSV Files (*.csv);;All Files (*)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            import csv
+            from datetime import datetime
+
+            with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                # Write header
+                writer.writerow([
+                    "Date/Time", "Filename", "URL", "Interface", "IP Address",
+                    "File Size (Bytes)", "Speed Limit (MB/s)", "File Path"
+                ])
+
+                # Write entries
+                for entry in self.download_history:
+                    try:
+                        dt = datetime.fromisoformat(entry['completion_time'])
+                        time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    except:
+                        time_str = entry['completion_time']
+
+                    writer.writerow([
+                        time_str,
+                        entry.get('filename', ''),
+                        entry.get('url', ''),
+                        entry['interface'].get('name', ''),
+                        entry['interface'].get('ip', ''),
+                        entry.get('file_size', 0),
+                        entry.get('speed_limit', ''),
+                        entry.get('filepath', '')
+                    ])
+
+            QMessageBox.information(
+                self,
+                "Export Successful",
+                f"Exported {len(self.download_history)} entries to:\n{file_path}"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Export Failed",
+                f"Failed to export history:\n{str(e)}"
+            )
+
     def update_status_bar(self):
         """Update the status bar with current statistics."""
         active_count = self.download_manager.get_active_count()
@@ -1062,6 +1507,20 @@ class DownloadManagerApp(QMainWindow):
                 "progress_percentage": progress.get("percentage", 0)
             })
 
+        # Save download history
+        state["download_history"] = []
+        for entry in self.download_history:
+            state["download_history"].append({
+                'download_id': entry['download_id'],
+                'url': entry['url'],
+                'filename': entry['filename'],
+                'filepath': entry['filepath'],
+                'interface': entry['interface'],
+                'file_size': entry['file_size'],
+                'completion_time': entry['completion_time'],
+                'speed_limit': entry['speed_limit']
+            })
+
         return state
 
     def _restore_state(self):
@@ -1101,9 +1560,23 @@ class DownloadManagerApp(QMainWindow):
             }
             self.queued_downloads.append(download_info)
 
+        # Restore download history
+        for entry in state.get("download_history", []):
+            self.download_history.append({
+                'download_id': entry.get('download_id', 0),
+                'url': entry['url'],
+                'filename': entry['filename'],
+                'filepath': entry['filepath'],
+                'interface': entry['interface'],
+                'file_size': entry.get('file_size', 0),
+                'completion_time': entry['completion_time'],
+                'speed_limit': entry.get('speed_limit')
+            })
+
         # Update UI with restored state
         self.update_queue_table()
         self.update_active_downloads_table()
+        self.update_history_table()
 
 
 def main():
