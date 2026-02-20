@@ -3,12 +3,13 @@ Configuration settings for Multi-WAN Download Manager
 """
 import os
 import sys
+import logging
 
 
 # ============================================================================
 # PORTABLE PATH DETECTION
 # ============================================================================
-def _get_portable_path():
+def _get_portable_path() -> str:
     """
     Get base path for portable application.
 
@@ -100,3 +101,41 @@ STATE_DIR = os.path.join(PORTABLE_BASE_DIR, ".multiwan_downloader")
 STATE_FILE = os.path.join(STATE_DIR, "state.json")
 BACKUP_DIR = os.path.join(STATE_DIR, "backups")
 AUTO_SAVE_INTERVAL = 30  # seconds - periodic auto-save interval
+
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+def setup_logging(log_dir: str = None) -> None:
+    """
+    Configure logging for the application.
+
+    Args:
+        log_dir: Directory to store log files (defaults to STATE_DIR)
+    """
+    if log_dir is None:
+        log_dir = STATE_DIR
+
+    # Create log directory if it doesn't exist
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Configure logging
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    date_format = '%Y-%m-%d %H:%M:%S'
+
+    # File handler with rotation
+    log_file = os.path.join(log_dir, 'multiwan_downloader.log')
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(log_format, date_format))
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter(log_format, date_format))
+
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)

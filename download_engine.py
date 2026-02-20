@@ -6,6 +6,7 @@ allowing downloads through multiple network interfaces simultaneously.
 """
 import os
 import time
+import logging
 import requests
 from requests_toolbelt.adapters.source import SourceAddressAdapter
 from typing import Callable, Optional, Dict, Any
@@ -13,6 +14,9 @@ from urllib.parse import unquote
 import socket
 
 import config
+from utils import format_time
+
+logger = logging.getLogger(__name__)
 
 # Disable SSL warnings if verification is disabled
 if not config.SSL_VERIFY:
@@ -103,7 +107,7 @@ class DownloadEngine:
                 'success': True
             }
 
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             return {
                 'success': False,
                 'error': str(e)
@@ -128,7 +132,7 @@ class DownloadEngine:
                 if 'filename=' in content_disp:
                     filename = content_disp.split('filename=')[-1].strip('"\'')
                     return unquote(filename)
-            except Exception:
+            except (ValueError, KeyError):
                 pass
 
         # Fallback to URL path
@@ -137,7 +141,7 @@ class DownloadEngine:
             filename = path.split('/')[-1]
             if filename:
                 return unquote(filename)
-        except Exception:
+        except ValueError:
             pass
 
         # Default fallback
@@ -323,31 +327,12 @@ class DownloadEngine:
             if speed_mbps > 0:
                 remaining_bytes = self.total_size - self.downloaded_bytes
                 eta_seconds = remaining_bytes / (speed_mbps * 1024 * 1024)
-                eta = self._format_time(eta_seconds)
+                eta = format_time(eta_seconds)
             else:
                 eta = "Calculating..."
 
             # Call the progress callback
             progress_callback(percentage, self.downloaded_bytes, self.total_size, speed_mbps, eta)
-
-    def _format_time(self, seconds: float) -> str:
-        """
-        Format seconds into HH:MM:SS string.
-
-        Args:
-            seconds: Time in seconds
-
-        Returns:
-            Formatted time string
-        """
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-
-        if hours > 0:
-            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-        else:
-            return f"{minutes:02d}:{secs:02d}"
 
     def pause(self):
         """Pause the download."""
@@ -386,8 +371,8 @@ def verify_source_ip(source_ip: str) -> bool:
 
         return returned_ip == source_ip
 
-    except Exception as e:
-        print(f"Error verifying source IP: {e}")
+    except (requests.exceptions.RequestException, ValueError, KeyError) as e:
+        logger.error("Error verifying source IP: %s", e)
         return False
 
 

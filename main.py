@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PyQt6.QtWidgets import QApplication
 from download_manager_ui import DownloadManagerApp
+import config
 
 
 def main():
@@ -23,6 +24,9 @@ def main():
 
     Initializes the Qt application and launches the main window.
     """
+    # Setup logging
+    config.setup_logging()
+
     # Create QApplication instance
     app = QApplication(sys.argv)
 

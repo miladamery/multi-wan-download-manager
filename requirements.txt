@@ -1,6 +1,6 @@
 PyQt6==6.6.1
 psutil==5.9.8
-netifaces
+netifaces==0.11.0
 requests==2.31.0
 requests-toolbelt==1.0.0
 

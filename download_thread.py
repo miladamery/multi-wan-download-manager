@@ -7,9 +7,12 @@ in the background without blocking the GUI.
 from PyQt6.QtCore import QThread, pyqtSignal, QObject
 from typing import Optional
 import os
+import logging
 
 from download_engine import DownloadEngine
 from config import DEFAULT_DOWNLOAD_DIR
+
+logger = logging.getLogger(__name__)
 
 
 class DownloadSignals(QObject):
@@ -117,7 +120,8 @@ class DownloadThread(QThread):
                     error += f" ({downloaded} bytes downloaded)"
                 self.signals.download_failed.emit(error)
 
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
+            logger.error("Download error: %s", e)
             self.signals.download_failed.emit(f"Unexpected error: {str(e)}")
 
     def _progress_callback(self, percentage: int, downloaded: int, total: int, speed: float, eta: str):
@@ -168,8 +172,8 @@ class DownloadThread(QThread):
         if self.filepath and os.path.exists(self.filepath):
             try:
                 os.remove(self.filepath)
-            except Exception:
-                pass
+            except OSError as e:
+                logger.warning("Failed to remove partial file %s: %s", self.filepath, e)
 
     def get_progress_info(self) -> dict:
         """

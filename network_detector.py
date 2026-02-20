@@ -7,7 +7,12 @@ including their IP addresses, gateways, MAC addresses, and connection status.
 import psutil
 import netifaces
 import socket
+import logging
 from typing import List, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+# Import requests for exception handling (imported lazily in test_internet_access)
 
 
 def get_network_interfaces() -> List[Dict[str, str]]:
@@ -93,8 +98,8 @@ def get_network_interfaces() -> List[Dict[str, str]]:
 
             interfaces.append(interface_info)
 
-    except Exception as e:
-        print(f"Error detecting network interfaces: {e}")
+    except (OSError, psutil.Error) as e:
+        logger.error("Error detecting network interfaces: %s", e)
         return []
 
     return interfaces
@@ -128,7 +133,7 @@ def get_connected_interfaces() -> List[Dict[str, str]]:
     return [iface for iface in all_interfaces if iface['status'] == 'connected']
 
 
-def test_internet_access(source_ip: str, timeout: int = None) -> bool:
+def test_internet_access(source_ip: str, timeout: Optional[int] = None) -> bool:
     """
     Test if the given source IP has internet access.
 
@@ -141,6 +146,7 @@ def test_internet_access(source_ip: str, timeout: int = None) -> bool:
     """
     try:
         import config
+        import requests.exceptions
 
         if timeout is None:
             timeout = config.INTERNET_TEST_TIMEOUT
@@ -157,7 +163,7 @@ def test_internet_access(source_ip: str, timeout: int = None) -> bool:
             verify=config.SSL_VERIFY
         )
         return response.status_code == 200
-    except Exception:
+    except (OSError, requests.exceptions.RequestException):
         return False
 
 

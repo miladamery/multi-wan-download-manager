@@ -10,10 +10,13 @@ Handles saving and loading application state including:
 import json
 import os
 import shutil
+import logging
 from datetime import datetime
 from typing import Dict, Any
 
 import config
+
+logger = logging.getLogger(__name__)
 
 
 class StateManager:
@@ -52,8 +55,8 @@ class StateManager:
                 json.dump(state, f, indent=2, ensure_ascii=False)
 
             return True
-        except Exception as e:
-            print(f"Error saving state: {e}")
+        except (OSError, json.JSONEncodeError, TypeError) as e:
+            logger.error("Error saving state: %s", e)
             return False
 
     def load_state(self) -> Dict[str, Any]:
@@ -71,8 +74,8 @@ class StateManager:
                 state = json.load(f)
 
             return state
-        except Exception as e:
-            print(f"Error loading state: {e}")
+        except (OSError, json.JSONDecodeError) as e:
+            logger.error("Error loading state: %s", e)
             # Try to restore from backup
             return self._restore_from_backup()
 
@@ -97,7 +100,7 @@ class StateManager:
                 latest_backup = os.path.join(self.backup_dir, backups[0])
                 with open(latest_backup, 'r', encoding='utf-8') as f:
                     return json.load(f)
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             pass
 
         return {}
@@ -113,7 +116,7 @@ class StateManager:
             # Remove old backups (keep last 10)
             for old_backup in backups[10:]:
                 os.remove(os.path.join(self.backup_dir, old_backup))
-        except Exception:
+        except OSError:
             pass
 
     def clear_state(self):
@@ -121,5 +124,5 @@ class StateManager:
         try:
             if os.path.exists(self.state_file):
                 os.remove(self.state_file)
-        except Exception:
+        except OSError:
             pass

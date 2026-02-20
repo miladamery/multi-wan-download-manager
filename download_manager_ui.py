@@ -15,16 +15,23 @@ from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QIcon, QFont, QColor
 from typing import Optional, List, Dict, Any
 import os
+import logging
+from threading import Lock
+
+import requests.exceptions
 
 from network_detector import get_network_interfaces, get_connected_interfaces, get_interfaces_with_internet
 from download_thread import DownloadThread, DownloadManager
 from download_engine import DownloadEngine
 from state_manager import StateManager
+from utils import format_file_size
 from config import (
     WINDOW_TITLE, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
     REFRESH_INTERVAL, DEFAULT_SPEED_LIMIT, SPEED_LIMIT_UNLIMITED,
     DEFAULT_DOWNLOAD_DIR
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DownloadManagerApp(QMainWindow):
@@ -40,6 +47,11 @@ class DownloadManagerApp(QMainWindow):
         self.network_interfaces = []
         self.queued_downloads = []  # List of queued download info
         self.download_history = []  # List of completed download entries
+
+        # Thread synchronization locks
+        self.queue_lock = Lock()
+        self.active_lock = Lock()
+        self.interface_lock = Lock()
 
         # State management
         self.state_manager = StateManager()
@@ -469,17 +481,6 @@ class DownloadManagerApp(QMainWindow):
 
         return True
 
-    def _format_file_size(self, size_bytes: int) -> str:
-        """Format file size in human-readable format."""
-        if size_bytes == 0:
-            return "Unknown"
-
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size_bytes < 1024.0:
-                return f"{size_bytes:.1f} {unit}"
-            size_bytes /= 1024.0
-        return f"{size_bytes:.1f} PB"
-
     def _get_distribution_summary(self, urls: List[str], interfaces: List[Dict]) -> str:
         """
         Generate a summary of how URLs are distributed across interfaces.
@@ -579,7 +580,7 @@ class DownloadManagerApp(QMainWindow):
                 f"Successfully imported {len(urls)} URL(s) from file."
             )
 
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             QMessageBox.critical(
                 self,
                 "Import Error",
@@ -682,7 +683,7 @@ class DownloadManagerApp(QMainWindow):
                 info = download_engine.get_download_info(url, assigned_interface['ip'])
                 if info.get('success'):
                     file_size = info.get('file_size', 0)
-            except Exception:
+            except requests.exceptions.RequestException:
                 file_size = 0  # Silently fail if size fetch fails
 
             # Create download info dict
@@ -694,8 +695,9 @@ class DownloadManagerApp(QMainWindow):
                 'status': 'queued'
             }
 
-            # Add to queue
-            self.queued_downloads.append(download_info)
+            # Add to queue (with lock protection)
+            with self.queue_lock:
+                self.queued_downloads.append(download_info)
             added_count += 1
 
         # Close progress dialog
@@ -753,7 +755,7 @@ class DownloadManagerApp(QMainWindow):
             info = download_engine.get_download_info(url, interface_data['ip'])
             if info.get('success'):
                 file_size = info.get('file_size', 0)
-        except Exception:
+        except requests.exceptions.RequestException:
             file_size = 0  # Silently fail if size fetch fails
 
         # Add to queued downloads
@@ -765,7 +767,8 @@ class DownloadManagerApp(QMainWindow):
             'status': 'queued'
         }
 
-        self.queued_downloads.append(download_info)
+        with self.queue_lock:
+            self.queued_downloads.append(download_info)
         self.update_queue_table()
 
         # Clear URL input for next download
@@ -773,9 +776,12 @@ class DownloadManagerApp(QMainWindow):
 
     def update_queue_table(self):
         """Update the queue table with current queued downloads."""
-        self.queue_table.setRowCount(len(self.queued_downloads))
+        with self.queue_lock:
+            queue_snapshot = list(self.queued_downloads)
 
-        for row, download in enumerate(self.queued_downloads):
+        self.queue_table.setRowCount(len(queue_snapshot))
+
+        for row, download in enumerate(queue_snapshot):
             # URL
             url_item = QTableWidgetItem(download['url'])
             self.queue_table.setItem(row, 0, url_item)
@@ -795,7 +801,7 @@ class DownloadManagerApp(QMainWindow):
 
             # File size (column 3)
             file_size = download.get('file_size', 0)
-            size_text = self._format_file_size(file_size)
+            size_text = format_file_size(file_size)
             size_item = QTableWidgetItem(size_text)
             self.queue_table.setItem(row, 3, size_item)
 
@@ -830,25 +836,28 @@ class DownloadManagerApp(QMainWindow):
 
     def remove_from_queue(self, row: int):
         """Remove a download from the queue."""
-        if 0 <= row < len(self.queued_downloads):
-            del self.queued_downloads[row]
-            self.update_queue_table()
+        with self.queue_lock:
+            if 0 <= row < len(self.queued_downloads):
+                del self.queued_downloads[row]
+        self.update_queue_table()
 
     def move_queue_up(self, row: int):
         """Move a queue item up by one position."""
-        if 0 < row < len(self.queued_downloads):
-            # Swap with previous item
-            self.queued_downloads[row], self.queued_downloads[row - 1] = \
-                self.queued_downloads[row - 1], self.queued_downloads[row]
-            self.update_queue_table()
+        with self.queue_lock:
+            if 0 < row < len(self.queued_downloads):
+                # Swap with previous item
+                self.queued_downloads[row], self.queued_downloads[row - 1] = \
+                    self.queued_downloads[row - 1], self.queued_downloads[row]
+        self.update_queue_table()
 
     def move_queue_down(self, row: int):
         """Move a queue item down by one position."""
-        if 0 <= row < len(self.queued_downloads) - 1:
-            # Swap with next item
-            self.queued_downloads[row], self.queued_downloads[row + 1] = \
-                self.queued_downloads[row + 1], self.queued_downloads[row]
-            self.update_queue_table()
+        with self.queue_lock:
+            if 0 <= row < len(self.queued_downloads) - 1:
+                # Swap with next item
+                self.queued_downloads[row], self.queued_downloads[row + 1] = \
+                    self.queued_downloads[row + 1], self.queued_downloads[row]
+        self.update_queue_table()
 
     def start_all_downloads(self):
         """Start all queued downloads and resume paused downloads - max 1 per interface at a time."""
@@ -856,18 +865,22 @@ class DownloadManagerApp(QMainWindow):
         # First, resume all paused downloads
         self.download_manager.resume_all()
 
-        # Then start new downloads from queue
-        if not self.queued_downloads:
-            # No new downloads to start, but update table in case we resumed paused ones
-            self.update_active_downloads_table()
-            return
+        # Then start new downloads from queue (with lock protection)
+        with self.queue_lock:
+            if not self.queued_downloads:
+                # No new downloads to start, but update table in case we resumed paused ones
+                self.update_active_downloads_table()
+                return
+
+            # Copy the queue to avoid holding lock during download operations
+            queue_snapshot = list(self.queued_downloads)
 
         # Track which interfaces we've started a download for
         started_interfaces = set()
         downloads_to_remove = []
 
         # Start 1 download per interface, keep rest in queue
-        for i, download_info in enumerate(self.queued_downloads):
+        for i, download_info in enumerate(queue_snapshot):
             interface_ip = download_info['interface']['ip']
 
             # Skip if we already started a download for this interface
@@ -909,9 +922,12 @@ class DownloadManagerApp(QMainWindow):
             # Mark for removal from queue (will be removed after loop)
             downloads_to_remove.append(i)
 
-        # Remove started downloads from queue (in reverse order to maintain indices)
-        for i in sorted(downloads_to_remove, reverse=True):
-            del self.queued_downloads[i]
+        # Remove started downloads from queue (with lock protection)
+        with self.queue_lock:
+            # Remove in reverse order to maintain indices
+            for i in sorted(downloads_to_remove, reverse=True):
+                if i < len(self.queued_downloads):
+                    del self.queued_downloads[i]
 
         self.update_queue_table()
         self.update_active_downloads_table()
@@ -982,7 +998,7 @@ class DownloadManagerApp(QMainWindow):
             # File size (column 3)
             progress_info = download['thread'].get_progress_info()
             total_bytes = progress_info.get('total', 0)
-            size_text = self._format_file_size(total_bytes)
+            size_text = format_file_size(total_bytes)
             size_item = QTableWidgetItem(size_text)
             self.active_table.setItem(row, 3, size_item)
 
@@ -1055,7 +1071,7 @@ class DownloadManagerApp(QMainWindow):
 
             # Size
             file_size = entry.get('file_size', 0)
-            size_text = self._format_file_size(file_size)
+            size_text = format_file_size(file_size)
             size_item = QTableWidgetItem(size_text)
             self.history_table.setItem(row, 3, size_item)
 
@@ -1133,8 +1149,9 @@ class DownloadManagerApp(QMainWindow):
         if download_id in self.download_manager.active_downloads:
             del self.download_manager.active_downloads[download_id]
 
-        # Add to queue
-        self.queued_downloads.append(download_info)
+        # Add to queue (with lock protection)
+        with self.queue_lock:
+            self.queued_downloads.append(download_info)
 
         # Update UI
         self.update_active_downloads_table()
@@ -1234,39 +1251,49 @@ class DownloadManagerApp(QMainWindow):
         Args:
             interface_ip: The IP address of the interface to start download for
         """
-        # Find first queued download for this interface
-        for i, download_info in enumerate(self.queued_downloads):
-            if download_info['interface']['ip'] == interface_ip:
-                # Start this download
-                download_id = self.download_manager.add_download(
-                    url=download_info['url'],
-                    source_ip=interface_ip,
-                    speed_limit=download_info['speed_limit']
+        download_to_start = None
+        download_index = None
+
+        # Find first queued download for this interface (with lock protection)
+        with self.queue_lock:
+            for i, download_info in enumerate(self.queued_downloads):
+                if download_info['interface']['ip'] == interface_ip:
+                    download_to_start = download_info
+                    download_index = i
+                    break
+
+            # Remove from queue
+            if download_index is not None:
+                del self.queued_downloads[download_index]
+
+        # Start the download outside the lock to avoid holding it during potentially long operations
+        if download_to_start:
+            download_id = self.download_manager.add_download(
+                url=download_to_start['url'],
+                source_ip=interface_ip,
+                speed_limit=download_to_start['speed_limit']
+            )
+
+            # Get the download thread and connect signals
+            download = self.download_manager.get_download(download_id)
+            if download:
+                thread = download['thread']
+
+                # Connect signals
+                thread.signals.progress_updated.connect(
+                    lambda p, d, t, s, e, did=download_id: self.on_download_progress(did, p, d, t, s, e)
+                )
+                thread.signals.download_completed.connect(
+                    lambda fp, did=download_id: self.on_download_completed(did, fp)
+                )
+                thread.signals.download_failed.connect(
+                    lambda err, did=download_id: self.on_download_failed(did, err)
                 )
 
-                # Get the download thread and connect signals
-                download = self.download_manager.get_download(download_id)
-                if download:
-                    thread = download['thread']
+                # Start the download
+                self.download_manager.start_download(download_id)
 
-                    # Connect signals
-                    thread.signals.progress_updated.connect(
-                        lambda p, d, t, s, e, did=download_id: self.on_download_progress(did, p, d, t, s, e)
-                    )
-                    thread.signals.download_completed.connect(
-                        lambda fp, did=download_id: self.on_download_completed(did, fp)
-                    )
-                    thread.signals.download_failed.connect(
-                        lambda err, did=download_id: self.on_download_failed(did, err)
-                    )
-
-                    # Start the download
-                    self.download_manager.start_download(download_id)
-
-                # Remove from queue
-                del self.queued_downloads[i]
-                self.update_queue_table()
-                break  # Only start one download per call
+            self.update_queue_table()
 
     def view_history_details(self, row: int):
         """Show detailed information about a history entry."""
@@ -1286,7 +1313,7 @@ class DownloadManagerApp(QMainWindow):
             <tr><td><b>URL:</b></td><td>{entry.get('url', 'Unknown')}</td></tr>
             <tr><td><b>File Path:</b></td><td>{entry.get('filepath', 'Unknown')}</td></tr>
             <tr><td><b>Interface:</b></td><td>{entry['interface'].get('name', 'Unknown')} ({entry['interface'].get('ip', 'Unknown')})</td></tr>
-            <tr><td><b>File Size:</b></td><td>{self._format_file_size(entry.get('file_size', 0))}</td></tr>
+            <tr><td><b>File Size:</b></td><td>{format_file_size(entry.get('file_size', 0))}</td></tr>
             <tr><td><b>Speed Limit:</b></td><td>{entry.get('speed_limit', 'Unlimited') if entry.get('speed_limit') else 'Unlimited'} MB/s</td></tr>
             <tr><td><b>Completed:</b></td><td>{entry.get('completion_time', 'Unknown')}</td></tr>
             </table>
@@ -1346,10 +1373,10 @@ class DownloadManagerApp(QMainWindow):
                 info = download_engine.get_download_info(url, interface['ip'])
                 if info.get('success'):
                     file_size = info.get('file_size', 0)
-            except Exception:
+            except requests.exceptions.RequestException:
                 file_size = 0
 
-            # Add to queue
+            # Add to queue (with lock protection)
             download_info = {
                 'url': url,
                 'interface': interface,
@@ -1358,7 +1385,8 @@ class DownloadManagerApp(QMainWindow):
                 'status': 'queued'
             }
 
-            self.queued_downloads.append(download_info)
+            with self.queue_lock:
+                self.queued_downloads.append(download_info)
             self.update_queue_table()
 
             # Show confirmation
@@ -1406,7 +1434,6 @@ class DownloadManagerApp(QMainWindow):
 
         try:
             import csv
-            from datetime import datetime
 
             with open(file_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
@@ -1419,10 +1446,11 @@ class DownloadManagerApp(QMainWindow):
                 # Write entries
                 for entry in self.download_history:
                     try:
+                        from datetime import datetime
                         dt = datetime.fromisoformat(entry['completion_time'])
                         time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-                    except:
-                        time_str = entry['completion_time']
+                    except (ValueError, KeyError):
+                        time_str = entry.get('completion_time', '')
 
                     writer.writerow([
                         time_str,
@@ -1440,7 +1468,7 @@ class DownloadManagerApp(QMainWindow):
                 "Export Successful",
                 f"Exported {len(self.download_history)} entries to:\n{file_path}"
             )
-        except Exception as e:
+        except (OSError, csv.Error) as e:
             QMessageBox.critical(
                 self,
                 "Export Failed",
@@ -1533,32 +1561,34 @@ class DownloadManagerApp(QMainWindow):
         # Restore next_id
         self.download_manager.next_id = state.get("next_id", 1)
 
-        # First, restore active downloads to the TOP of the queue (in reverse order to maintain original order)
-        active_downloads_to_queue = []
-        for dl in state.get("active_downloads", []):
-            download_info = {
-                "url": dl["url"],
-                "interface": dl["interface"],
-                "speed_limit": dl.get("speed_limit"),
-                "file_size": dl.get("file_size", 0),
-                "status": "queued"
-            }
-            active_downloads_to_queue.append(download_info)
+        # Restore state with lock protection
+        with self.queue_lock:
+            # First, restore active downloads to the TOP of the queue (in reverse order to maintain original order)
+            active_downloads_to_queue = []
+            for dl in state.get("active_downloads", []):
+                download_info = {
+                    "url": dl["url"],
+                    "interface": dl["interface"],
+                    "speed_limit": dl.get("speed_limit"),
+                    "file_size": dl.get("file_size", 0),
+                    "status": "queued"
+                }
+                active_downloads_to_queue.append(download_info)
 
-        # Insert at the beginning of the queue (in reverse to preserve order)
-        for download_info in reversed(active_downloads_to_queue):
-            self.queued_downloads.insert(0, download_info)
+            # Insert at the beginning of the queue (in reverse to preserve order)
+            for download_info in reversed(active_downloads_to_queue):
+                self.queued_downloads.insert(0, download_info)
 
-        # Then, restore queued downloads (they go after the previously active ones)
-        for dl in state.get("queued_downloads", []):
-            download_info = {
-                "url": dl["url"],
-                "interface": dl["interface"],
-                "speed_limit": dl.get("speed_limit"),
-                "file_size": dl.get("file_size", 0),
-                "status": "queued"
-            }
-            self.queued_downloads.append(download_info)
+            # Then, restore queued downloads (they go after the previously active ones)
+            for dl in state.get("queued_downloads", []):
+                download_info = {
+                    "url": dl["url"],
+                    "interface": dl["interface"],
+                    "speed_limit": dl.get("speed_limit"),
+                    "file_size": dl.get("file_size", 0),
+                    "status": "queued"
+                }
+                self.queued_downloads.append(download_info)
 
         # Restore download history
         for entry in state.get("download_history", []):
