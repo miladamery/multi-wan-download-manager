@@ -74,11 +74,25 @@ Tests that downloads are correctly bound to each detected interface by verifying
 - `DownloadManager` class - Manages multiple download threads, tracks status (queued/downloading/paused/cancelled)
 - One download per interface limitation enforced in GUI's `start_all_downloads()`
 
+**Bandwidth Graph** (`bandwidth_graph.py`)
+- `BandwidthGraphWidget` - Real-time bandwidth usage visualization with PyQtGraph
+- Features:
+  - **5-minute rolling buffer** (600 data points at 500ms intervals)
+  - **Per-interface view**: Separate colored curves for each network interface
+  - **Total aggregated view**: Combined bandwidth across all interfaces
+  - **View toggle**: Radio buttons to switch between per-interface and total views
+  - **Statistics display**: Current/Peak/Average speeds (last 60 seconds only, filters outliers >100 MB/s)
+  - **Collapsible**: Click ▲/▼ button to hide/show graph while keeping statistics visible
+- Thread-safe data access with locks
+- Smart buffer reset when idle to prevent stale statistics
+- Auto-updates every 500ms synchronized with GUI refresh timer
+
 **GUI** (`download_manager_ui.py`)
 - PyQt6 `DownloadManagerApp` main window with **tabbed interface**: "Downloads" and "History" tabs
 - **Downloads Tab**: Contains all download management features
   - Tabbed URL input: "Single URL" and "Batch URLs (Round-Robin)" tabs
   - Two tables: `queue_table` (pending downloads) and `active_table` (running downloads)
+  - **Bandwidth Graph Section**: Real-time bandwidth usage visualization with per-interface and total views
 - Queue table columns: URL, Interface, Speed Limit, **Size**, Actions
   - Actions: **Move Up (↑)**, **Move Down (↓)**, **Remove**
 - Active downloads table columns: Status, File, Interface, **Size**, Progress, Speed|ETA, Actions

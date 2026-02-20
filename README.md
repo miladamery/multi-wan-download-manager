@@ -18,6 +18,11 @@ A Windows download manager application that can download files through multiple 
 - **Download History**: View complete download history with details, export to CSV, copy URLs, and re-download
 - **Resizable Columns**: Drag column borders to adjust table widths to your preference
 - **Network Detection**: Automatically detects all connected network interfaces
+- **Real-time Bandwidth Graphs**: Monitor bandwidth usage with per-interface breakdown and total aggregated view
+  - 5-minute rolling history with collapsible graph
+  - Current/Peak/Average speed statistics
+  - Toggle between per-interface and total views
+  - Statistics remain visible when graph is collapsed
 
 ## Requirements
 
@@ -51,6 +56,7 @@ pip install -r requirements.txt
 
 The required packages are:
 - PyQt6 - GUI framework
+- pyqtgraph - Real-time data visualization and graphing
 - psutil - System and network information
 - netifaces - Network interface detection
 - requests - HTTP library

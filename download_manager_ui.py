@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QProgressBar, QComboBox, QSpinBox, QHeaderView, QGroupBox,
     QFileDialog, QMessageBox, QFrame, QStatusBar, QCheckBox,
-    QTabWidget, QTextEdit, QProgressDialog, QDialog
+    QTabWidget, QTextEdit, QProgressDialog, QDialog, QRadioButton
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QIcon, QFont, QColor
@@ -25,6 +25,7 @@ from download_thread import DownloadThread, DownloadManager
 from download_engine import DownloadEngine
 from state_manager import StateManager
 from utils import format_file_size
+from bandwidth_graph import BandwidthGraphWidget
 from config import (
     WINDOW_TITLE, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
     REFRESH_INTERVAL, DEFAULT_SPEED_LIMIT, SPEED_LIMIT_UNLIMITED,
@@ -91,6 +92,8 @@ class DownloadManagerApp(QMainWindow):
         downloads_layout.addWidget(self.create_tabbed_url_section())
         downloads_layout.addWidget(self.create_queue_section())
         downloads_layout.addWidget(self.create_active_downloads_section())
+        # Add bandwidth graph section
+        downloads_layout.addWidget(self.create_bandwidth_graph_section())
         downloads_layout.addWidget(self.create_control_buttons())
 
         # Tab 2: History (new)
@@ -323,6 +326,53 @@ class DownloadManagerApp(QMainWindow):
         self.active_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
         layout.addWidget(self.active_table)
+        group.setLayout(layout)
+        return group
+
+    def create_bandwidth_graph_section(self) -> QGroupBox:
+        """Create the bandwidth graph section with view toggle and statistics."""
+        group = QGroupBox("Bandwidth Usage (Last 5 Minutes)")
+        layout = QVBoxLayout()
+
+        # View toggle row
+        toggle_layout = QHBoxLayout()
+        self.view_per_interface_btn = QRadioButton("Per-Interface")
+        self.view_total_btn = QRadioButton("Total Aggregated")
+        self.view_per_interface_btn.setChecked(True)
+        self.view_per_interface_btn.toggled.connect(self._on_graph_view_changed)
+
+        # Collapse button
+        self.collapse_graph_btn = QPushButton("▲")
+        self.collapse_graph_btn.setMaximumWidth(30)
+        self.collapse_graph_btn.setCheckable(True)
+        self.collapse_graph_btn.clicked.connect(self._toggle_graph_visibility)
+        self.collapse_graph_btn.setToolTip("Collapse graph")
+
+        toggle_layout.addWidget(QLabel("View Mode:"))
+        toggle_layout.addWidget(self.view_per_interface_btn)
+        toggle_layout.addWidget(self.view_total_btn)
+        toggle_layout.addStretch()
+        toggle_layout.addWidget(self.collapse_graph_btn)
+        layout.addLayout(toggle_layout)
+
+        # Statistics row
+        self.bandwidth_stats_label = QLabel("Current: 0.00 MB/s | Peak: 0.00 MB/s | Average: 0.00 MB/s")
+        self.bandwidth_stats_label.setStyleSheet("QLabel { font-weight: bold; padding: 5px; background-color: #f0f0f0; border-radius: 3px; }")
+        layout.addWidget(self.bandwidth_stats_label)
+
+        # Graph widget - wrap in container for toggling
+        self.bandwidth_graph_container = QWidget()
+        graph_container_layout = QVBoxLayout(self.bandwidth_graph_container)
+        graph_container_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.bandwidth_graph = BandwidthGraphWidget(self.network_interfaces)
+        self.bandwidth_graph.setMinimumHeight(150)  # Reduced from 250
+        # Set stats callback to update the label
+        self.bandwidth_graph.set_stats_callback(self._update_bandwidth_stats)
+
+        graph_container_layout.addWidget(self.bandwidth_graph)
+        layout.addWidget(self.bandwidth_graph_container)
+
         group.setLayout(layout)
         return group
 
@@ -951,6 +1001,72 @@ class DownloadManagerApp(QMainWindow):
         """Update progress for all active downloads."""
         self.update_active_downloads_table()
         self.update_status_bar()
+        # Collect bandwidth data for graphs
+        self._collect_bandwidth_data()
+
+    def _on_graph_view_changed(self):
+        """Handle graph view toggle between per-interface and total."""
+        if self.view_per_interface_btn.isChecked():
+            self.bandwidth_graph.set_view_mode('per_interface')
+        else:
+            self.bandwidth_graph.set_view_mode('total')
+
+    def _update_bandwidth_stats(self, stats: dict):
+        """Update the bandwidth statistics label."""
+        try:
+            if not stats:
+                self.bandwidth_stats_label.setText("No data")
+                return
+
+            if 'per_interface' in stats:
+                # Per-interface view
+                interface_stats = stats['per_interface']
+                if not interface_stats:
+                    self.bandwidth_stats_label.setText("No active downloads")
+                    return
+
+                # Build stats text for each interface
+                current_parts = []
+                for ip, values in interface_stats.items():
+                    name = values.get('name', ip)
+                    current = values['current']
+                    current_parts.append(f"{name}: {current:.2f} MB/s")
+
+                # Calculate totals for peak and average
+                total_peak = sum(v['peak'] for v in interface_stats.values())
+                total_avg = sum(v['average'] for v in interface_stats.values())
+
+                stats_text = f"Current: {' | '.join(current_parts)}\n"
+                stats_text += f"Peak: {total_peak:.2f} MB/s | Average: {total_avg:.2f} MB/s"
+            else:
+                # Total view
+                total_stats = stats.get('total', {})
+                if not total_stats:
+                    self.bandwidth_stats_label.setText("No data")
+                    return
+
+                current = total_stats['current']
+                peak = total_stats['peak']
+                average = total_stats['average']
+
+                stats_text = f"Current: {current:.2f} MB/s | Peak: {peak:.2f} MB/s | Average: {average:.2f} MB/s"
+
+            self.bandwidth_stats_label.setText(stats_text)
+        except Exception as e:
+            logger.error("Error updating bandwidth stats: %s", e)
+
+    def _toggle_graph_visibility(self):
+        """Toggle graph widget visibility while keeping stats."""
+        if self.collapse_graph_btn.isChecked():
+            # Collapse - hide graph
+            self.bandwidth_graph_container.hide()
+            self.collapse_graph_btn.setText("▼")
+            self.collapse_graph_btn.setToolTip("Expand graph")
+        else:
+            # Expand - show graph
+            self.bandwidth_graph_container.show()
+            self.collapse_graph_btn.setText("▲")
+            self.collapse_graph_btn.setToolTip("Collapse graph")
 
     def update_active_downloads_table(self):
         """Update the active downloads table."""
@@ -1483,6 +1599,39 @@ class DownloadManagerApp(QMainWindow):
 
         status_text = f"Active: {active_count} | Total Speed: {total_speed:.2f} MB/s | Total Downloads: {total_count}"
         self.status_bar.showMessage(status_text)
+
+    def _collect_bandwidth_data(self):
+        """Collect current speed data from all active downloads for the graph."""
+        import time
+
+        current_timestamp = time.time()
+
+        # Calculate per-interface speeds
+        interface_speeds = {}
+        downloads = self.download_manager.get_all_downloads()
+
+        for download_id, download in downloads.items():
+            if download['status'] == 'downloading':
+                source_ip = download['source_ip']
+                progress = download['thread'].get_progress_info()
+                speed = progress.get('speed', 0.0)
+                # Sum speeds for same interface (should be max 1 per interface)
+                interface_speeds[source_ip] = interface_speeds.get(source_ip, 0.0) + speed
+
+        # Calculate total speed
+        total_speed = sum(interface_speeds.values())
+
+        # Update graph widget
+        if hasattr(self, 'bandwidth_graph'):
+            # If no downloads are active and buffer has data, reset to prevent stale statistics
+            if total_speed == 0 and len(self.bandwidth_graph.total_speeds) > 0:
+                # Check if buffer has been idle for a while (all recent values are 0)
+                if all(s == 0 for s in list(self.bandwidth_graph.total_speeds)[-10:]):
+                    self.bandwidth_graph.reset_buffers()
+
+            # Only add data point if there's activity or buffer is being populated
+            if total_speed > 0 or len(self.bandwidth_graph.timestamps) < 10:
+                self.bandwidth_graph.add_data_point(current_timestamp, interface_speeds, total_speed)
 
     def closeEvent(self, event):
         """Handle application close - save state before exiting."""

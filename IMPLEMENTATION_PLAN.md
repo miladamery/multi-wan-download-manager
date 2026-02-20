@@ -418,10 +418,7 @@ Before considering the project complete:
 ## Future Enhancements (Optional)
 
 - Download scheduling (start at specific time)
-- Download history/logs
 - Export/import download lists
-- Bandwidth usage graphs
 - Dark mode theme
 - Multi-language support
-- Portable version (no installation required)
 - Command-line interface alternative

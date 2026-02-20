@@ -3,6 +3,7 @@ psutil==5.9.8
 netifaces==0.11.0
 requests==2.31.0
 requests-toolbelt==1.0.0
+pyqtgraph==0.13.3
 
 # Build dependencies
 pyinstaller==6.19.0
